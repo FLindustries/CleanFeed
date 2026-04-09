@@ -101,10 +101,19 @@
     const state = await sendMsg({ action: 'getFullState' });
     applyState(state);
 
-    // Clear processed flags so everything gets re-evaluated
+    // Remove ALL CleanFeed hiding — then re-evaluate everything fresh
+    document.querySelectorAll('.cleanfeed-hidden').forEach((el) => {
+      el.classList.remove('cleanfeed-hidden');
+    });
     document.querySelectorAll('[data-cf-checked]').forEach((el) => {
       delete el.dataset.cfChecked;
     });
+    document.querySelectorAll('[data-cf-blocked]').forEach((el) => {
+      delete el.dataset.cfBlocked;
+    });
+    // Remove channel blocked message if present
+    const blockedMsg = document.getElementById('cf-channel-blocked-msg');
+    if (blockedMsg) blockedMsg.remove();
 
     filterPage();
   }
