@@ -325,7 +325,11 @@
         t.includes('not interested') ||
         t.includes('non mi interessa') ||
         t.includes('report') ||
-        t.includes('segnala')
+        t.includes('segnala') ||
+        t.includes('add to queue') ||
+        t.includes('aggiungi alla coda') ||
+        t.includes('save to watch later') ||
+        t.includes('salva in guarda')
     );
     if (!isVideoMenu) return;
 
