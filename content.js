@@ -137,10 +137,12 @@
 
   function hideBlockedContent() {
     const cards = document.querySelectorAll(YT.VIDEO_CARDS);
+    let newCards = 0;
 
     for (const card of cards) {
       if (card.dataset.cfChecked) continue;
       card.dataset.cfChecked = 'true';
+      newCards++;
 
       const channelName = YT.getChannelName(card);
       const channelLower = channelName ? channelName.toLowerCase() : '';
@@ -168,6 +170,26 @@
           logHidden(card, 'keyword', keyword);
           break;
         }
+      }
+    }
+
+    if (newCards > 0) {
+      console.log('CleanFeed: hideBlockedContent processed', newCards, 'new cards');
+    }
+
+    // Re-check previously processed cards — YouTube may recycle DOM elements
+    // by swapping their data/content without removing them from the tree.
+    // In that case data-cf-checked is still set but the card now shows a
+    // different (possibly blocked) channel.
+    for (const card of cards) {
+      if (!card.dataset.cfChecked) continue; // just processed above
+      // Skip cards already hidden
+      if (card.classList.contains('cleanfeed-hidden')) continue;
+      const channelName = YT.getChannelName(card);
+      const channelLower = channelName ? channelName.toLowerCase() : '';
+      if (channelLower && blockedChannelNames.has(channelLower)) {
+        card.classList.add('cleanfeed-hidden');
+        logHidden(card, 'channel', channelName);
       }
     }
 
@@ -447,22 +469,10 @@
     const items = YT.getMenuItems(listbox);
     if (!items || items.length === 0) return;
 
-    // Verify it's a video menu by checking for known items
-    const menuTexts = Array.from(items).map((item) =>
-      (item.textContent || '').toLowerCase()
-    );
-    const isVideoMenu = menuTexts.some(
-      (t) =>
-        t.includes('not interested') ||
-        t.includes('non mi interessa') ||
-        t.includes('report') ||
-        t.includes('segnala') ||
-        t.includes('add to queue') ||
-        t.includes('aggiungi alla coda') ||
-        t.includes('save to watch later') ||
-        t.includes('salva in guarda')
-    );
-    if (!isVideoMenu) return;
+    // Verify it's a video menu: if it has at least 2 items it's likely a
+    // video context menu (homepage, search, or sidebar).  We already guard
+    // against wrong menus via lastClickedVideoCard + channelName below.
+    if (items.length < 2) return;
 
     // Get channel info from tracked video card
     if (!lastClickedVideoCard) return;
@@ -711,38 +721,30 @@
 
   async function triggerInterestCheck(query) {
     if (!query) return;
+    console.log('CleanFeed: triggerInterestCheck', query, sessionPromptCount);
     // Don't re-prompt for the same query on SPA re-renders
     if (query === lastPromptedQuery) return;
     // Per-session limit: free users get 3 prompts per page-load session
     if (sessionPromptCount >= 3 && !isPro) return;
 
-    // Ask background to check if this query matches an existing interest
-    const result = await sendMsg({ action: 'checkInterest', query });
-
-    // Background may say shouldPrompt:false because persisted interestPromptCount >= 3.
-    // We use the session count instead, so only respect "no" if the query actually
-    // matches an existing saved interest (i.e., user already categorised it).
-    let shouldPrompt = result.shouldPrompt;
-    if (!shouldPrompt && !isPro && sessionPromptCount < 3) {
-      // The query matched an existing interest — don't prompt (user already decided)
-      // We can detect this: background returns shouldPrompt:false when either
-      // (a) count >= 3, or (b) query matches existing interest.
-      // Check if it matches an existing interest by looking at the result.
-      // If matchesExisting is not provided, re-check with a direct message.
-      const matchCheck = await sendMsg({ action: 'checkInterestMatch', query });
-      if (matchCheck && matchCheck.matches) {
-        // Query matches an existing interest — user already categorised it, skip
-        return;
-      }
-      // Count was >= 3 but session is fresh — override and prompt
-      shouldPrompt = true;
+    // Check if this query already matches a saved interest — if so, skip
+    const matchCheck = await sendMsg({ action: 'checkInterestMatch', query });
+    if (matchCheck && matchCheck.matches) {
+      console.log('CleanFeed: query matches existing interest, skipping prompt');
+      return;
     }
 
-    if (shouldPrompt) {
-      lastPromptedQuery = query;
-      sessionPromptCount++;
-      showCuriosityPrompt(query, isPro, sessionPromptCount <= 3);
+    // Pro users: also respect the enableInterestBoundaries setting
+    if (isPro) {
+      const result = await sendMsg({ action: 'checkInterest', query });
+      if (!result.shouldPrompt) return;
     }
+
+    // Show the prompt
+    lastPromptedQuery = query;
+    sessionPromptCount++;
+    console.log('CleanFeed: showing curiosity prompt #' + sessionPromptCount);
+    showCuriosityPrompt(query, isPro, sessionPromptCount <= 3);
   }
 
   // ── Curiosity Window Prompt ───────────────────────────────────────────
