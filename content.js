@@ -205,35 +205,18 @@ function removeSearchOnlyMode() {
 // --- YouTube Menu Injection ---
 
 function watchForMenuPopup() {
-  // Strategy 1: Watch for new nodes being added (some YouTube versions)
-  const menuObserver = new MutationObserver((mutations) => {
-    for (const mutation of mutations) {
-      // Check added nodes
-      for (const node of mutation.addedNodes) {
-        if (node.nodeType !== 1) continue;
-        const popup = node.tagName === 'YTD-MENU-POPUP-RENDERER'
-          ? node
-          : node.querySelector?.('ytd-menu-popup-renderer');
-        if (popup) {
-          injectBlockOption(popup);
-        }
-      }
-
-      // Check attribute changes (menu becoming visible)
-      if (mutation.type === 'attributes' && mutation.target.tagName === 'TP-YT-IRON-DROPDOWN') {
-        if (mutation.target.hasAttribute('focused_') || mutation.target.style.display !== 'none') {
-          const popup = mutation.target.querySelector('ytd-menu-popup-renderer');
-          if (popup) {
-            injectBlockOption(popup);
-          }
-        }
-      }
+  const menuObserver = new MutationObserver(() => {
+    // New YouTube (2025+): yt-sheet-view-model inside tp-yt-iron-dropdown
+    const sheetMenu = document.querySelector('tp-yt-iron-dropdown yt-sheet-view-model');
+    if (sheetMenu) {
+      injectBlockOptionNew(sheetMenu);
+      return;
     }
 
-    // Strategy 2: Check for any visible popup on any mutation
-    const visiblePopup = document.querySelector('ytd-popup-container ytd-menu-popup-renderer');
-    if (visiblePopup) {
-      injectBlockOption(visiblePopup);
+    // Legacy YouTube: ytd-menu-popup-renderer
+    const legacyPopup = document.querySelector('ytd-popup-container ytd-menu-popup-renderer');
+    if (legacyPopup) {
+      injectBlockOptionLegacy(legacyPopup);
     }
   });
 
@@ -245,8 +228,69 @@ function watchForMenuPopup() {
   });
 }
 
-function injectBlockOption(popup) {
+// New YouTube menu structure (2025+): yt-sheet-view-model > yt-list-view-model > yt-list-item-view-model
+function injectBlockOptionNew(sheetMenu) {
   // Don't inject twice
+  if (sheetMenu.querySelector('.cleanfeed-menu-item')) return;
+
+  const listbox = sheetMenu.querySelector('yt-list-view-model[role="listbox"]');
+  if (!listbox) return;
+
+  // Verify this is a video menu (has menu items like "Not interested")
+  const menuItems = listbox.querySelectorAll('yt-list-item-view-model[role="menuitem"]');
+  if (menuItems.length === 0) return;
+
+  // Check it's a video context menu (not a channel or playlist menu)
+  const hasRelevantItem = Array.from(menuItems).some(item => {
+    const text = item.textContent?.trim().toLowerCase() || '';
+    return text.includes('non mi interessa') || text.includes('not interested') ||
+           text.includes('non consigliare') || text.includes("don't recommend") ||
+           text.includes('segnala') || text.includes('report');
+  });
+  if (!hasRelevantItem) return;
+
+  const channelInfo = findChannelForActiveMenu();
+
+  // Create the block option matching YouTube's new style
+  const blockItem = document.createElement('div');
+  blockItem.className = 'cleanfeed-menu-item';
+  blockItem.setAttribute('role', 'menuitem');
+  blockItem.innerHTML = `
+    <div class="cleanfeed-cf-logo">CF</div>
+    <span>${chrome.i18n.getMessage('blockChannelPermanently')}</span>
+  `;
+
+  blockItem.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    await handleBlockClick(channelInfo);
+  });
+
+  // Create separator
+  const separator = document.createElement('div');
+  separator.className = 'cleanfeed-menu-separator';
+
+  // Try to insert after "Non consigliare il canale" / "Don't recommend channel"
+  let insertAfter = null;
+  for (const item of menuItems) {
+    const text = item.textContent?.trim().toLowerCase() || '';
+    if (text.includes('non consigliare') || text.includes("don't recommend")) {
+      insertAfter = item;
+      break;
+    }
+  }
+
+  if (insertAfter && insertAfter.nextSibling) {
+    listbox.insertBefore(separator, insertAfter.nextSibling);
+    listbox.insertBefore(blockItem, separator.nextSibling);
+  } else {
+    listbox.appendChild(separator);
+    listbox.appendChild(blockItem);
+  }
+}
+
+// Legacy YouTube menu structure: ytd-menu-popup-renderer > tp-yt-paper-listbox
+function injectBlockOptionLegacy(popup) {
   if (popup.querySelector('.cleanfeed-menu-item')) return;
 
   const listbox = popup.querySelector('tp-yt-paper-listbox') ||
@@ -255,11 +299,9 @@ function injectBlockOption(popup) {
 
   const channelInfo = findChannelForActiveMenu();
 
-  // Create separator
   const separator = document.createElement('div');
   separator.className = 'cleanfeed-menu-separator';
 
-  // Create block option
   const blockItem = document.createElement('div');
   blockItem.className = 'cleanfeed-menu-item';
   blockItem.innerHTML = `
@@ -269,44 +311,14 @@ function injectBlockOption(popup) {
 
   blockItem.addEventListener('click', async (e) => {
     e.stopPropagation();
-
-    const name = channelInfo?.name || findChannelNameFromPage();
-    const id = channelInfo?.id || null;
-
-    if (!name) {
-      showToast('Could not detect channel name. Try from a different page.');
-      closeYouTubeMenu();
-      return;
-    }
-
-    const result = await chrome.runtime.sendMessage({
-      action: 'blockChannel',
-      channelName: name,
-      channelId: id
-    });
-
-    closeYouTubeMenu();
-
-    if (result.success) {
-      showToast(chrome.i18n.getMessage('blockedToast', [name]));
-      blockedNamesSet.add(name.toLowerCase());
-      filterPage();
-    } else if (result.reason === 'free_limit') {
-      showToast(chrome.i18n.getMessage('freeLimitToast'));
-      setTimeout(() => {
-        chrome.runtime.sendMessage({ action: 'openPaymentPage' });
-      }, 2000);
-    } else if (result.reason === 'already_blocked') {
-      showToast(`"${name}" is already blocked.`);
-    }
+    await handleBlockClick(channelInfo);
   });
 
-  // Try to insert after "Don't recommend channel" option
   const menuItems = listbox.querySelectorAll('ytd-menu-service-item-renderer, ytd-menu-navigation-item-renderer');
   let insertAfter = null;
   for (const item of menuItems) {
     const text = item.textContent?.trim().toLowerCase() || '';
-    if (text.includes("don't recommend") || text.includes('not interested')) {
+    if (text.includes("don't recommend") || text.includes('non consigliare')) {
       insertAfter = item;
     }
   }
@@ -315,9 +327,41 @@ function injectBlockOption(popup) {
     listbox.insertBefore(separator, insertAfter.nextSibling);
     listbox.insertBefore(blockItem, separator.nextSibling);
   } else {
-    // Fallback: append to end
     listbox.appendChild(separator);
     listbox.appendChild(blockItem);
+  }
+}
+
+// Shared click handler for both menu versions
+async function handleBlockClick(channelInfo) {
+  const name = channelInfo?.name || findChannelNameFromPage();
+  const id = channelInfo?.id || null;
+
+  if (!name) {
+    showToast('Could not detect channel name. Try from a different page.');
+    closeYouTubeMenu();
+    return;
+  }
+
+  const result = await chrome.runtime.sendMessage({
+    action: 'blockChannel',
+    channelName: name,
+    channelId: id
+  });
+
+  closeYouTubeMenu();
+
+  if (result.success) {
+    showToast(chrome.i18n.getMessage('blockedToast', [name]));
+    blockedNamesSet.add(name.toLowerCase());
+    filterPage();
+  } else if (result.reason === 'free_limit') {
+    showToast(chrome.i18n.getMessage('freeLimitToast'));
+    setTimeout(() => {
+      chrome.runtime.sendMessage({ action: 'openPaymentPage' });
+    }, 2000);
+  } else if (result.reason === 'already_blocked') {
+    showToast(`"${name}" is already blocked.`);
   }
 }
 
