@@ -93,7 +93,8 @@ function hideBlockedChannels() {
     }
   });
 
-  if (hiddenCount > 0) {
+  // Increment stat by actual count of hidden videos
+  for (let i = 0; i < hiddenCount; i++) {
     chrome.runtime.sendMessage({ action: 'incrementStat', stat: 'videosHidden' });
   }
 }
@@ -280,8 +281,24 @@ function injectBlockOption(popup) {
     }
   });
 
-  listbox.appendChild(separator);
-  listbox.appendChild(blockItem);
+  // Try to insert after "Don't recommend channel" option
+  const menuItems = listbox.querySelectorAll('ytd-menu-service-item-renderer, ytd-menu-navigation-item-renderer');
+  let insertAfter = null;
+  for (const item of menuItems) {
+    const text = item.textContent?.trim().toLowerCase() || '';
+    if (text.includes("don't recommend") || text.includes('not interested')) {
+      insertAfter = item;
+    }
+  }
+
+  if (insertAfter && insertAfter.nextSibling) {
+    listbox.insertBefore(separator, insertAfter.nextSibling);
+    listbox.insertBefore(blockItem, separator.nextSibling);
+  } else {
+    // Fallback: append to end
+    listbox.appendChild(separator);
+    listbox.appendChild(blockItem);
+  }
 }
 
 function findChannelForActiveMenu() {
