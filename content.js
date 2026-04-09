@@ -405,14 +405,31 @@
   function injectChannelPageButton() {
     const existing = document.querySelector('.cleanfeed-channel-block-btn');
 
-    if (!YT.isChannelPage()) {
+    const isChannel = YT.isChannelPage();
+    const isWatch = window.location.pathname === '/watch';
+
+    if (!isChannel && !isWatch) {
       if (existing) existing.remove();
       return;
     }
     if (existing) return;
 
-    const channelName = YT.getPageChannelName();
-    const channelId = YT.getPageChannelId();
+    // Get channel name — different sources for channel page vs watch page
+    let channelName, channelId;
+    if (isChannel) {
+      channelName = YT.getPageChannelName();
+      channelId = YT.getPageChannelId();
+    } else {
+      // Watch page: get from video owner renderer
+      const ownerLink = document.querySelector('ytd-video-owner-renderer a[href^="/@"]');
+      channelName = ownerLink?.textContent?.trim();
+      channelId = ownerLink?.getAttribute('href')?.replace('/', '');
+      // If empty, try the channel name text element
+      if (!channelName) {
+        const ownerName = document.querySelector('ytd-video-owner-renderer ytd-channel-name #text a, ytd-video-owner-renderer .ytd-channel-name a');
+        channelName = ownerName?.textContent?.trim();
+      }
+    }
     if (!channelName) return;
 
     // Try multiple container selectors for YouTube's evolving channel page layout
@@ -437,11 +454,22 @@
     }
     if (!container) return;
 
+    // Store name/id as data attributes so click handler always has fresh values
     const btn = cfEl(
       'button',
       {
         className: 'cleanfeed-channel-block-btn',
-        onClick: () => handleBlockClick(channelName, channelId),
+        'data-cf-channel': channelName,
+        'data-cf-channel-id': channelId || '',
+        onClick: (e) => {
+          const name = e.currentTarget.getAttribute('data-cf-channel');
+          const id = e.currentTarget.getAttribute('data-cf-channel-id');
+          if (name) {
+            handleBlockClick(name, id);
+          } else {
+            showToast(msg('couldNotDetect'));
+          }
+        },
       },
       [cfLogo(), cfEl('span', { textContent: msg('blockThisChannel') })]
     );
