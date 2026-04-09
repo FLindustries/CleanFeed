@@ -101,7 +101,15 @@ function hideBlockedChannels() {
 }
 
 function extractChannelName(element) {
-  const selectors = [
+  // Strategy 1 (2025+ YouTube): channel link with href starting with /@
+  const channelLink = element.querySelector('a[href^="/@"]');
+  if (channelLink) {
+    const text = channelLink.textContent.trim();
+    if (text) return text;
+  }
+
+  // Strategy 2 (legacy YouTube): various channel name selectors
+  const legacySelectors = [
     '#channel-name a',
     'ytd-channel-name a',
     '#text a',
@@ -110,7 +118,7 @@ function extractChannelName(element) {
     'ytd-channel-name #text'
   ];
 
-  for (const selector of selectors) {
+  for (const selector of legacySelectors) {
     const el = element.querySelector(selector);
     if (el) {
       const text = el.textContent.trim();
@@ -387,14 +395,43 @@ async function handleBlockClick(channelInfo) {
 }
 
 function findChannelForActiveMenu() {
-  const triggerBtn = document.activeElement?.closest(
-    'ytd-video-renderer, ytd-rich-item-renderer, ytd-compact-video-renderer, ytd-grid-video-renderer'
-  );
+  // The three-dot button that was clicked — try multiple strategies
+  const videoSelectors = 'ytd-video-renderer, ytd-rich-item-renderer, ytd-compact-video-renderer, ytd-grid-video-renderer';
 
-  if (triggerBtn) {
-    const name = extractChannelName(triggerBtn);
-    const linkEl = triggerBtn.querySelector('#channel-name a, ytd-channel-name a');
-    const href = linkEl?.href || '';
+  // Strategy 1: activeElement might be the button or inside the video card
+  let videoCard = document.activeElement?.closest(videoSelectors);
+
+  // Strategy 2: find the most recently hovered/focused video card with a visible menu button
+  if (!videoCard) {
+    const menuButtons = document.querySelectorAll('ytd-rich-item-renderer button[aria-label], ytd-video-renderer button[aria-label]');
+    for (const btn of menuButtons) {
+      if (btn.offsetParent !== null) { // visible
+        const card = btn.closest(videoSelectors);
+        if (card) {
+          videoCard = card;
+          break;
+        }
+      }
+    }
+  }
+
+  // Strategy 3: find the video card that contains the active popup's trigger
+  if (!videoCard) {
+    const popupContainer = document.querySelector('ytd-popup-container');
+    if (popupContainer) {
+      // YouTube stores which element triggered the popup
+      const trigger = popupContainer.__data?.triggerElement || popupContainer.triggerElement_;
+      if (trigger) {
+        videoCard = trigger.closest(videoSelectors);
+      }
+    }
+  }
+
+  if (videoCard) {
+    const name = extractChannelName(videoCard);
+    // Get channel ID from link
+    const linkEl = videoCard.querySelector('a[href^="/@"], #channel-name a, ytd-channel-name a');
+    const href = linkEl?.getAttribute('href') || '';
     const idMatch = href.match(/\/(channel|c|user|@)([^\/\?]+)/);
     const id = idMatch ? idMatch[2] : null;
     return name ? { name, id } : null;
@@ -404,8 +441,20 @@ function findChannelForActiveMenu() {
 }
 
 function findChannelNameFromPage() {
-  const channelHeader = document.querySelector('ytd-channel-name.ytd-video-owner-renderer a');
-  return channelHeader?.textContent?.trim() || null;
+  // Try new YouTube DOM first, then legacy
+  const selectors = [
+    'ytd-video-owner-renderer a[href^="/@"]',
+    'ytd-channel-name.ytd-video-owner-renderer a',
+    '#owner #channel-name a'
+  ];
+  for (const sel of selectors) {
+    const el = document.querySelector(sel);
+    if (el) {
+      const text = el.textContent.trim();
+      if (text) return text;
+    }
+  }
+  return null;
 }
 
 function closeYouTubeMenu() {
