@@ -1,104 +1,47 @@
 {
-  "extensionName": {
-    "message": "CleanFeed - YouTube That Respects You"
-  },
-  "extensionDescription": {
-    "message": "Permanent channel blocking, interest boundaries, smart decay, and search-only mode. Take control of YouTube's algorithm."
-  },
-  "searchOnlyMode": {
-    "message": "Search-Only Mode"
-  },
-  "searchOnlyDesc": {
-    "message": "Hide homepage feed completely"
-  },
-  "interestBoundaries": {
-    "message": "Interest Boundaries"
-  },
-  "interestBoundariesDesc": {
-    "message": "Ask before adding new interests"
-  },
-  "smartDecay": {
-    "message": "Smart Decay"
-  },
-  "smartDecayDesc": {
-    "message": "Auto-remove interests after 30 days"
-  },
-  "blocked": {
-    "message": "Blocked"
-  },
-  "hidden": {
-    "message": "Hidden"
-  },
-  "interests": {
-    "message": "Interests"
-  },
-  "controls": {
-    "message": "Controls"
-  },
-  "blockChannelPermanently": {
-    "message": "Block channel permanently"
-  },
-  "blockedToast": {
-    "message": "Blocked \"$CHANNEL$\" permanently",
-    "placeholders": {
-      "channel": { "content": "$1" }
-    }
-  },
-  "freeLimitToast": {
-    "message": "Free plan allows 5 blocked channels. Upgrade to Pro for unlimited."
-  },
-  "unlockFeatures": {
-    "message": "Unlock all features"
-  },
-  "upgradeToPro": {
-    "message": "Upgrade to Pro — $3.99/mo"
-  },
-  "whatToWatch": {
-    "message": "What do you want to watch?"
-  },
-  "searchOnlyActive": {
-    "message": "Search-Only Mode is active"
-  },
-  "yourInterests": {
-    "message": "Your Interests"
-  },
-  "quickAccess": {
-    "message": "Quick Access"
-  },
-  "subscriptions": {
-    "message": "Subscriptions"
-  },
-  "history": {
-    "message": "History"
-  },
-  "newSearch": {
-    "message": "New search: \"$QUERY$\"",
-    "placeholders": {
-      "query": { "content": "$1" }
-    }
-  },
-  "rememberInterest": {
-    "message": "Should CleanFeed remember this interest?"
-  },
-  "justOnce": {
-    "message": "Just once"
-  },
-  "remember": {
-    "message": "Remember"
-  },
-  "clearAll": {
-    "message": "Clear All Blocks"
-  },
-  "clearAllConfirm": {
-    "message": "Clear all blocked channels? This cannot be undone."
-  },
-  "emptyBlockedList": {
-    "message": "No channels blocked yet. Use the three-dot menu on any YouTube video to block a channel."
-  },
-  "pro": {
-    "message": "PRO"
-  },
-  "free": {
-    "message": "FREE"
-  }
+  "extensionName": { "message": "CleanFeed - YouTube That Respects You" },
+  "extensionDescription": { "message": "Permanent channel blocking, keyword filtering, interest boundaries, and Shorts removal. Take control of YouTube's algorithm." },
+  "controls": { "message": "Controls" },
+  "blocked": { "message": "Blocked" },
+  "hidden": { "message": "Hidden" },
+  "interests": { "message": "Interests" },
+  "hideShorts": { "message": "Hide Shorts" },
+  "hideShortsDesc": { "message": "Remove all Shorts sections from YouTube" },
+  "keywordBlocking": { "message": "Keyword Blocking" },
+  "keywordBlockingDesc": { "message": "Hide videos matching blocked keywords" },
+  "interestBoundaries": { "message": "Interest Boundaries" },
+  "interestBoundariesDesc": { "message": "Control how new searches affect your feed" },
+  "smartDecay": { "message": "Smart Decay" },
+  "smartDecayDesc": { "message": "Auto-remove interests after 30 days" },
+  "blockChannelPermanently": { "message": "Block channel permanently" },
+  "blockThisChannel": { "message": "Block this channel" },
+  "blockedToast": { "message": "Blocked \"$CHANNEL$\" permanently", "placeholders": { "channel": { "content": "$1" } } },
+  "couldNotDetect": { "message": "Could not detect channel name." },
+  "addKeyword": { "message": "Add keyword" },
+  "addKeywordPlaceholder": { "message": "e.g. gaming, drama, react..." },
+  "keywordsUsed": { "message": "$COUNT$/3 keywords used", "placeholders": { "count": { "content": "$1" } } },
+  "keywordLimitToast": { "message": "Free plan allows 3 keywords. Upgrade to Pro for unlimited." },
+  "hiddenVideos": { "message": "Hidden Videos" },
+  "hiddenVideosUpgrade": { "message": "Upgrade to Pro to see hidden videos" },
+  "interestsUpgrade": { "message": "Upgrade to Pro for Interest Boundaries" },
+  "subscriptionExceptionToast": { "message": "$COUNT$ of your subscribed channels were affected. Exclude them?", "placeholders": { "count": { "content": "$1" } } },
+  "excludeChannel": { "message": "Exclude" },
+  "curiosityJustNow": { "message": "Just now" },
+  "curiosityToday": { "message": "Today" },
+  "curiosityAlways": { "message": "Always" },
+  "newSearch": { "message": "New search: \"$QUERY$\"", "placeholders": { "query": { "content": "$1" } } },
+  "rememberInterest": { "message": "How long do you want to see this content?" },
+  "undoHide": { "message": "Undo" },
+  "clearAll": { "message": "Clear All" },
+  "clearAllConfirm": { "message": "Clear all blocked channels? This cannot be undone." },
+  "unlockFeatures": { "message": "Unlock all features" },
+  "upgradeToPro": { "message": "Upgrade to Pro — $3.99/mo" },
+  "pro": { "message": "PRO" },
+  "free": { "message": "FREE" },
+  "noBlockedChannels": { "message": "No channels blocked yet. Use the three-dot menu on any YouTube video to block a channel." },
+  "noBlockedKeywords": { "message": "No keywords blocked yet." },
+  "noHiddenVideos": { "message": "No hidden videos yet." },
+  "noInterests": { "message": "No interests saved yet." },
+  "keywordReason": { "message": "Keyword: $KW$", "placeholders": { "kw": { "content": "$1" } } },
+  "channelReason": { "message": "Channel: $CH$", "placeholders": { "ch": { "content": "$1" } } }
 }
