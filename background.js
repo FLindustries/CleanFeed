@@ -143,6 +143,12 @@ async function handleMessage(request) {
       };
     }
 
+    case 'checkInterestMatch': {
+      // Check if a query matches an existing saved interest without incrementing count
+      const matches = await Storage.matchesExistingInterest(request.query);
+      return { matches: !!matches };
+    }
+
     case 'addInterest': {
       const key = await Storage.addInterest(request.query, request.expiresAt || null);
       return { success: true, key };

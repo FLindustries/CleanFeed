@@ -19,6 +19,8 @@
   // searchIntercepted — now tracked via data-cf-search-intercepted on the input element
   let activeJustNowQueries = new Set();
   const loggedVideos = new Set(); // dedup: track title+channel combos already logged
+  let sessionPromptCount = 0; // per-session curiosity prompt count (resets each page load)
+  let lastPromptedQuery = ''; // avoid re-prompting for the same query on SPA re-renders
 
   // ── Helpers ────────────────────────────────────────────────────────────
 
@@ -170,16 +172,84 @@
     }
 
     // Hide blocked channels EVERYWHERE — search results, Shorts, shelves, etc.
-    // Channel result cards in search
+    // Channel result cards in search — aggressive matching across all text/link content
     document.querySelectorAll('ytd-channel-renderer').forEach((el) => {
       if (el.dataset.cfChecked) return;
       el.dataset.cfChecked = 'true';
-      const nameEl = el.querySelector('#channel-title, #text a, a[href^="/@"], yt-formatted-string');
-      const name = nameEl?.textContent?.trim()?.toLowerCase();
+      // Try multiple strategies to extract the channel name
+      let name = null;
+      // 1. Any link pointing to a channel handle
+      const handleLink = el.querySelector('a[href^="/@"]');
+      if (handleLink) {
+        name = handleLink.textContent.trim().toLowerCase();
+        // If the link text is empty, extract from href
+        if (!name) {
+          const href = handleLink.getAttribute('href') || '';
+          const match = href.match(/\/@(.+)/);
+          if (match) name = decodeURIComponent(match[1]).toLowerCase();
+        }
+      }
+      // 2. Broader selectors for the channel title area
+      if (!name) {
+        const titleSelectors = [
+          '#channel-title', '#text a', '#text', 'yt-formatted-string#text',
+          'yt-formatted-string', '#channel-title-text', '.channel-name',
+          '#info #text-container yt-formatted-string'
+        ];
+        for (const sel of titleSelectors) {
+          const titleEl = el.querySelector(sel);
+          if (titleEl) {
+            const t = titleEl.textContent.trim().toLowerCase();
+            if (t && blockedChannelNames.has(t)) { name = t; break; }
+          }
+        }
+      }
       if (name && blockedChannelNames.has(name)) {
         el.classList.add('cleanfeed-hidden');
       }
     });
+
+    // Hide shelf renderers whose title contains a blocked channel name
+    // (e.g., "Le novità di marta daddato", "Ultimi Short di marta daddato",
+    //  "Latest from marta daddato", etc.)
+    const shelfSelectors = 'ytd-shelf-renderer, ytd-reel-shelf-renderer, ytd-horizontal-card-list-renderer';
+    document.querySelectorAll(shelfSelectors).forEach((shelf) => {
+      if (shelf.dataset.cfChecked) return;
+      shelf.dataset.cfChecked = 'true';
+      // Get the shelf title text
+      const titleEl = shelf.querySelector(
+        '#title, #title-text, .title, h2 yt-formatted-string, ' +
+        'yt-formatted-string.style-scope.ytd-shelf-renderer, ' +
+        'span#title-text, #title-container yt-formatted-string'
+      );
+      const titleText = titleEl?.textContent?.trim()?.toLowerCase() || '';
+      if (!titleText) return;
+      for (const blocked of blockedChannelNames) {
+        if (titleText.includes(blocked)) {
+          shelf.classList.add('cleanfeed-hidden');
+          break;
+        }
+      }
+    });
+
+    // Also hide any remaining video cards in search whose channel link matches
+    // but wasn't caught by the main VIDEO_CARDS loop (e.g., different renderer types)
+    if (window.location.pathname === '/results') {
+      document.querySelectorAll('ytd-video-renderer, ytd-reel-item-renderer').forEach((el) => {
+        if (el.classList.contains('cleanfeed-hidden')) return;
+        if (el.dataset.cfChecked) return;
+        // Check all channel-handle links inside
+        const links = el.querySelectorAll('a[href^="/@"]');
+        for (const link of links) {
+          const text = link.textContent.trim().toLowerCase();
+          if (text && blockedChannelNames.has(text)) {
+            el.classList.add('cleanfeed-hidden');
+            el.dataset.cfChecked = 'true';
+            break;
+          }
+        }
+      });
+    }
 
     // If we're on a blocked channel's page, hide ALL their content
     if (YT.isChannelPage()) {
@@ -603,61 +673,75 @@
   // ── Search Intercept (Interest Boundaries) ────────────────────────────
 
   function interceptSearch() {
-    // Try multiple selectors for the search input
+    // --- Input-based interception (keydown + button click) ---
     const searchInput = document.querySelector('input#search') ||
                         document.querySelector('input[name="search_query"]') ||
                         document.querySelector('ytd-searchbox input');
-    if (!searchInput) return;
 
-    // Avoid double-attaching to the same DOM element
-    if (searchInput.dataset.cfSearchIntercepted) return;
-    searchInput.dataset.cfSearchIntercepted = 'true';
+    if (searchInput && !searchInput.dataset.cfSearchIntercepted) {
+      searchInput.dataset.cfSearchIntercepted = 'true';
 
-    async function handleSearch() {
-      const query = searchInput.value.trim();
-      if (!query) return;
+      searchInput.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter') return;
+        const query = searchInput.value.trim();
+        if (query) triggerInterestCheck(query);
+      });
 
-      const result = await sendMsg({ action: 'checkInterest', query });
-      if (result.shouldPrompt) {
-        setTimeout(() => {
-          showCuriosityPrompt(
-            result.query,
-            result.isPro,
-            result.useInlineBanner
-          );
-        }, 500);
+      const searchBtn = document.querySelector('#search-icon-legacy, button[aria-label="Search"], ytd-searchbox button');
+      if (searchBtn) {
+        searchBtn.addEventListener('click', () => {
+          const query = searchInput.value.trim();
+          if (query) triggerInterestCheck(query);
+        });
       }
     }
 
-    // Use keydown instead of keypress (keypress is deprecated and may not fire for Enter)
-    searchInput.addEventListener('keydown', (e) => {
-      if (e.key !== 'Enter') return;
-      handleSearch();
-    });
-
-    // Also intercept the search button click
-    const searchBtn = document.querySelector('#search-icon-legacy, button[aria-label="Search"], ytd-searchbox button');
-    if (searchBtn) {
-      searchBtn.addEventListener('click', () => {
-        handleSearch();
-      });
-    }
-
-    // Also detect search via SPA navigation (URL changes to /results)
-    // This is handled via onNavigate -> interceptSearch, but we also need to
-    // check if we just navigated TO a search page and should prompt
+    // --- URL-based detection (primary & most reliable trigger) ---
+    // Fires regardless of how the search was initiated: keyboard, button,
+    // suggestion click, voice, URL paste, etc.
     if (window.location.pathname === '/results') {
       const params = new URLSearchParams(window.location.search);
       const query = params.get('search_query');
       if (query) {
-        // Small delay to let page render
-        setTimeout(async () => {
-          const result = await sendMsg({ action: 'checkInterest', query });
-          if (result.shouldPrompt) {
-            showCuriosityPrompt(result.query, result.isPro, result.useInlineBanner);
-          }
-        }, 800);
+        // Small delay to let the search page render
+        setTimeout(() => triggerInterestCheck(query), 800);
       }
+    }
+  }
+
+  async function triggerInterestCheck(query) {
+    if (!query) return;
+    // Don't re-prompt for the same query on SPA re-renders
+    if (query === lastPromptedQuery) return;
+    // Per-session limit: free users get 3 prompts per page-load session
+    if (sessionPromptCount >= 3 && !isPro) return;
+
+    // Ask background to check if this query matches an existing interest
+    const result = await sendMsg({ action: 'checkInterest', query });
+
+    // Background may say shouldPrompt:false because persisted interestPromptCount >= 3.
+    // We use the session count instead, so only respect "no" if the query actually
+    // matches an existing saved interest (i.e., user already categorised it).
+    let shouldPrompt = result.shouldPrompt;
+    if (!shouldPrompt && !isPro && sessionPromptCount < 3) {
+      // The query matched an existing interest — don't prompt (user already decided)
+      // We can detect this: background returns shouldPrompt:false when either
+      // (a) count >= 3, or (b) query matches existing interest.
+      // Check if it matches an existing interest by looking at the result.
+      // If matchesExisting is not provided, re-check with a direct message.
+      const matchCheck = await sendMsg({ action: 'checkInterestMatch', query });
+      if (matchCheck && matchCheck.matches) {
+        // Query matches an existing interest — user already categorised it, skip
+        return;
+      }
+      // Count was >= 3 but session is fresh — override and prompt
+      shouldPrompt = true;
+    }
+
+    if (shouldPrompt) {
+      lastPromptedQuery = query;
+      sessionPromptCount++;
+      showCuriosityPrompt(query, isPro, sessionPromptCount <= 3);
     }
   }
 
