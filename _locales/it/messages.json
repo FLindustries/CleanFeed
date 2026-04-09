@@ -1,0 +1,104 @@
+{
+  "extensionName": {
+    "message": "CleanFeed - YouTube Che Ti Rispetta"
+  },
+  "extensionDescription": {
+    "message": "Blocco permanente canali, confini di interesse, decadimento intelligente e modalità solo ricerca. Prendi il controllo dell'algoritmo di YouTube."
+  },
+  "searchOnlyMode": {
+    "message": "Modalità Solo Ricerca"
+  },
+  "searchOnlyDesc": {
+    "message": "Nascondi completamente il feed della homepage"
+  },
+  "interestBoundaries": {
+    "message": "Confini di Interesse"
+  },
+  "interestBoundariesDesc": {
+    "message": "Chiedi prima di aggiungere nuovi interessi"
+  },
+  "smartDecay": {
+    "message": "Decadimento Intelligente"
+  },
+  "smartDecayDesc": {
+    "message": "Rimuovi interessi dopo 30 giorni"
+  },
+  "blocked": {
+    "message": "Bloccati"
+  },
+  "hidden": {
+    "message": "Nascosti"
+  },
+  "interests": {
+    "message": "Interessi"
+  },
+  "controls": {
+    "message": "Controlli"
+  },
+  "blockChannelPermanently": {
+    "message": "Blocca canale permanentemente"
+  },
+  "blockedToast": {
+    "message": "Bloccato \"$CHANNEL$\" permanentemente",
+    "placeholders": {
+      "channel": { "content": "$1" }
+    }
+  },
+  "freeLimitToast": {
+    "message": "Il piano gratuito permette 5 canali bloccati. Passa a Pro per illimitati."
+  },
+  "unlockFeatures": {
+    "message": "Sblocca tutte le funzionalità"
+  },
+  "upgradeToPro": {
+    "message": "Passa a Pro — 3,99€/mese"
+  },
+  "whatToWatch": {
+    "message": "Cosa vuoi guardare?"
+  },
+  "searchOnlyActive": {
+    "message": "Modalità Solo Ricerca attiva"
+  },
+  "yourInterests": {
+    "message": "I Tuoi Interessi"
+  },
+  "quickAccess": {
+    "message": "Accesso Rapido"
+  },
+  "subscriptions": {
+    "message": "Iscrizioni"
+  },
+  "history": {
+    "message": "Cronologia"
+  },
+  "newSearch": {
+    "message": "Nuova ricerca: \"$QUERY$\"",
+    "placeholders": {
+      "query": { "content": "$1" }
+    }
+  },
+  "rememberInterest": {
+    "message": "CleanFeed deve ricordare questo interesse?"
+  },
+  "justOnce": {
+    "message": "Solo questa volta"
+  },
+  "remember": {
+    "message": "Ricorda"
+  },
+  "clearAll": {
+    "message": "Cancella Tutti i Blocchi"
+  },
+  "clearAllConfirm": {
+    "message": "Cancellare tutti i canali bloccati? Non è possibile annullare."
+  },
+  "emptyBlockedList": {
+    "message": "Nessun canale bloccato. Usa il menu a tre punti su qualsiasi video YouTube per bloccare un canale."
+  },
+  "pro": {
+    "message": "PRO"
+  },
+  "free": {
+    "message": "FREE"
+  }
+}

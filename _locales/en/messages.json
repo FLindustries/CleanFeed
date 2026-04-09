@@ -1,0 +1,104 @@
+{
+  "extensionName": {
+    "message": "CleanFeed - YouTube That Respects You"
+  },
+  "extensionDescription": {
+    "message": "Permanent channel blocking, interest boundaries, smart decay, and search-only mode. Take control of YouTube's algorithm."
+  },
+  "searchOnlyMode": {
+    "message": "Search-Only Mode"
+  },
+  "searchOnlyDesc": {
+    "message": "Hide homepage feed completely"
+  },
+  "interestBoundaries": {
+    "message": "Interest Boundaries"
+  },
+  "interestBoundariesDesc": {
+    "message": "Ask before adding new interests"
+  },
+  "smartDecay": {
+    "message": "Smart Decay"
+  },
+  "smartDecayDesc": {
+    "message": "Auto-remove interests after 30 days"
+  },
+  "blocked": {
+    "message": "Blocked"
+  },
+  "hidden": {
+    "message": "Hidden"
+  },
+  "interests": {
+    "message": "Interests"
+  },
+  "controls": {
+    "message": "Controls"
+  },
+  "blockChannelPermanently": {
+    "message": "Block channel permanently"
+  },
+  "blockedToast": {
+    "message": "Blocked \"$CHANNEL$\" permanently",
+    "placeholders": {
+      "channel": { "content": "$1" }
+    }
+  },
+  "freeLimitToast": {
+    "message": "Free plan allows 5 blocked channels. Upgrade to Pro for unlimited."
+  },
+  "unlockFeatures": {
+    "message": "Unlock all features"
+  },
+  "upgradeToPro": {
+    "message": "Upgrade to Pro — $3.99/mo"
+  },
+  "whatToWatch": {
+    "message": "What do you want to watch?"
+  },
+  "searchOnlyActive": {
+    "message": "Search-Only Mode is active"
+  },
+  "yourInterests": {
+    "message": "Your Interests"
+  },
+  "quickAccess": {
+    "message": "Quick Access"
+  },
+  "subscriptions": {
+    "message": "Subscriptions"
+  },
+  "history": {
+    "message": "History"
+  },
+  "newSearch": {
+    "message": "New search: \"$QUERY$\"",
+    "placeholders": {
+      "query": { "content": "$1" }
+    }
+  },
+  "rememberInterest": {
+    "message": "Should CleanFeed remember this interest?"
+  },
+  "justOnce": {
+    "message": "Just once"
+  },
+  "remember": {
+    "message": "Remember"
+  },
+  "clearAll": {
+    "message": "Clear All Blocks"
+  },
+  "clearAllConfirm": {
+    "message": "Clear all blocked channels? This cannot be undone."
+  },
+  "emptyBlockedList": {
+    "message": "No channels blocked yet. Use the three-dot menu on any YouTube video to block a channel."
+  },
+  "pro": {
+    "message": "PRO"
+  },
+  "free": {
+    "message": "FREE"
+  }
+}
