@@ -133,7 +133,11 @@ const YT = {
   },
 
   isChannelPage() {
-    return /^\/@|^\/channel\/|^\/c\/|^\/user\//.test(window.location.pathname);
+    // URL-based check
+    if (/^\/@|^\/channel\/|^\/c\/|^\/user\//.test(window.location.pathname)) return true;
+    // DOM-based check (YouTube sometimes redirects /@name to /name)
+    if (document.querySelector('ytd-c4-tabbed-header-renderer, #channel-header, ytd-browse[page-subtype="channels"]')) return true;
+    return false;
   },
 
   getMenuPopup() {
