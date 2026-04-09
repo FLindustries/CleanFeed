@@ -1,4 +1,5 @@
 // CleanFeed Content Script — Runs on YouTube pages
+// NOTE: YouTube enforces Trusted Types CSP — all DOM must use createElement/textContent, never innerHTML
 
 let blockedNamesSet = new Set();
 let currentSettings = {};
@@ -135,6 +136,32 @@ function startObserver() {
   });
 }
 
+// --- DOM Helper (Trusted Types safe) ---
+
+function buildElement(tag, attrs, children) {
+  const el = document.createElement(tag);
+  if (attrs) {
+    for (const [key, value] of Object.entries(attrs)) {
+      if (key === 'className') el.className = value;
+      else if (key === 'id') el.id = value;
+      else if (key === 'textContent') el.textContent = value;
+      else if (key === 'href') el.href = value;
+      else if (key.startsWith('on')) el.addEventListener(key.slice(2).toLowerCase(), value);
+      else el.setAttribute(key, value);
+    }
+  }
+  if (children) {
+    for (const child of children) {
+      if (typeof child === 'string') {
+        el.appendChild(document.createTextNode(child));
+      } else if (child) {
+        el.appendChild(child);
+      }
+    }
+  }
+  return el;
+}
+
 // --- Search-Only Mode ---
 
 function showSearchOnlyMode() {
@@ -154,38 +181,48 @@ function showSearchOnlyMode() {
   // Don't create overlay twice
   if (document.getElementById('cleanfeed-search-only')) return;
 
-  const overlay = document.createElement('div');
-  overlay.id = 'cleanfeed-search-only';
-  overlay.className = 'cleanfeed-search-only';
-
   // Build interest chips
-  let chipsHtml = '';
+  const chips = [];
   for (const [key, interest] of Object.entries(currentInterests)) {
-    const query = escapeHtml(interest.query);
-    chipsHtml += `<a class="cleanfeed-chip" href="/results?search_query=${encodeURIComponent(interest.query)}">${query}</a>`;
+    chips.push(
+      buildElement('a', {
+        className: 'cleanfeed-chip',
+        href: '/results?search_query=' + encodeURIComponent(interest.query),
+        textContent: interest.query
+      })
+    );
   }
 
-  const interestsSection = Object.keys(currentInterests).length > 0
-    ? `<div class="cleanfeed-search-only-section">
-         <div class="cleanfeed-search-only-label">${chrome.i18n.getMessage('yourInterests')}</div>
-         <div class="cleanfeed-interest-chips">${chipsHtml}</div>
-       </div>`
-    : '';
+  const sections = [];
 
-  overlay.innerHTML = `
-    <div class="cleanfeed-search-only-title">${chrome.i18n.getMessage('whatToWatch')}</div>
-    <div class="cleanfeed-search-only-subtitle">${chrome.i18n.getMessage('searchOnlyActive')}</div>
-    ${interestsSection}
-    <div class="cleanfeed-search-only-section">
-      <div class="cleanfeed-search-only-label">${chrome.i18n.getMessage('quickAccess')}</div>
-      <div class="cleanfeed-quick-links">
-        <a class="cleanfeed-quick-link" href="/feed/subscriptions">${chrome.i18n.getMessage('subscriptions')}</a>
-        <a class="cleanfeed-quick-link" href="/feed/history">${chrome.i18n.getMessage('history')}</a>
-      </div>
-    </div>
-  `;
+  // Title + subtitle
+  sections.push(buildElement('div', { className: 'cleanfeed-search-only-title', textContent: chrome.i18n.getMessage('whatToWatch') }));
+  sections.push(buildElement('div', { className: 'cleanfeed-search-only-subtitle', textContent: chrome.i18n.getMessage('searchOnlyActive') }));
 
-  // Insert after the header
+  // Interests section (if any)
+  if (chips.length > 0) {
+    const chipsContainer = buildElement('div', { className: 'cleanfeed-interest-chips' }, chips);
+    sections.push(
+      buildElement('div', { className: 'cleanfeed-search-only-section' }, [
+        buildElement('div', { className: 'cleanfeed-search-only-label', textContent: chrome.i18n.getMessage('yourInterests') }),
+        chipsContainer
+      ])
+    );
+  }
+
+  // Quick access section
+  sections.push(
+    buildElement('div', { className: 'cleanfeed-search-only-section' }, [
+      buildElement('div', { className: 'cleanfeed-search-only-label', textContent: chrome.i18n.getMessage('quickAccess') }),
+      buildElement('div', { className: 'cleanfeed-quick-links' }, [
+        buildElement('a', { className: 'cleanfeed-quick-link', href: '/feed/subscriptions', textContent: chrome.i18n.getMessage('subscriptions') }),
+        buildElement('a', { className: 'cleanfeed-quick-link', href: '/feed/history', textContent: chrome.i18n.getMessage('history') })
+      ])
+    ])
+  );
+
+  const overlay = buildElement('div', { id: 'cleanfeed-search-only', className: 'cleanfeed-search-only' }, sections);
+
   const pageManager = document.querySelector('ytd-page-manager');
   if (pageManager) {
     pageManager.prepend(overlay);
@@ -228,19 +265,34 @@ function watchForMenuPopup() {
   });
 }
 
-// New YouTube menu structure (2025+): yt-sheet-view-model > yt-list-view-model > yt-list-item-view-model
+function createBlockMenuItem(channelInfo) {
+  const logo = buildElement('div', { className: 'cleanfeed-cf-logo', textContent: 'CF' });
+  const label = buildElement('span', { textContent: chrome.i18n.getMessage('blockChannelPermanently') });
+
+  const blockItem = buildElement('div', {
+    className: 'cleanfeed-menu-item',
+    role: 'menuitem',
+    onClick: async (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      await handleBlockClick(channelInfo);
+    }
+  }, [logo, label]);
+
+  return blockItem;
+}
+
+// New YouTube menu structure (2025+)
 function injectBlockOptionNew(sheetMenu) {
-  // Don't inject twice
   if (sheetMenu.querySelector('.cleanfeed-menu-item')) return;
 
   const listbox = sheetMenu.querySelector('yt-list-view-model[role="listbox"]');
   if (!listbox) return;
 
-  // Verify this is a video menu (has menu items like "Not interested")
   const menuItems = listbox.querySelectorAll('yt-list-item-view-model[role="menuitem"]');
   if (menuItems.length === 0) return;
 
-  // Check it's a video context menu (not a channel or playlist menu)
+  // Verify it's a video context menu
   const hasRelevantItem = Array.from(menuItems).some(item => {
     const text = item.textContent?.trim().toLowerCase() || '';
     return text.includes('non mi interessa') || text.includes('not interested') ||
@@ -250,27 +302,10 @@ function injectBlockOptionNew(sheetMenu) {
   if (!hasRelevantItem) return;
 
   const channelInfo = findChannelForActiveMenu();
+  const separator = buildElement('div', { className: 'cleanfeed-menu-separator' });
+  const blockItem = createBlockMenuItem(channelInfo);
 
-  // Create the block option matching YouTube's new style
-  const blockItem = document.createElement('div');
-  blockItem.className = 'cleanfeed-menu-item';
-  blockItem.setAttribute('role', 'menuitem');
-  blockItem.innerHTML = `
-    <div class="cleanfeed-cf-logo">CF</div>
-    <span>${chrome.i18n.getMessage('blockChannelPermanently')}</span>
-  `;
-
-  blockItem.addEventListener('click', async (e) => {
-    e.stopPropagation();
-    e.preventDefault();
-    await handleBlockClick(channelInfo);
-  });
-
-  // Create separator
-  const separator = document.createElement('div');
-  separator.className = 'cleanfeed-menu-separator';
-
-  // Try to insert after "Non consigliare il canale" / "Don't recommend channel"
+  // Insert after "Non consigliare il canale" / "Don't recommend channel"
   let insertAfter = null;
   for (const item of menuItems) {
     const text = item.textContent?.trim().toLowerCase() || '';
@@ -289,30 +324,16 @@ function injectBlockOptionNew(sheetMenu) {
   }
 }
 
-// Legacy YouTube menu structure: ytd-menu-popup-renderer > tp-yt-paper-listbox
+// Legacy YouTube menu structure
 function injectBlockOptionLegacy(popup) {
   if (popup.querySelector('.cleanfeed-menu-item')) return;
 
-  const listbox = popup.querySelector('tp-yt-paper-listbox') ||
-                  popup.querySelector('#items');
+  const listbox = popup.querySelector('tp-yt-paper-listbox') || popup.querySelector('#items');
   if (!listbox) return;
 
   const channelInfo = findChannelForActiveMenu();
-
-  const separator = document.createElement('div');
-  separator.className = 'cleanfeed-menu-separator';
-
-  const blockItem = document.createElement('div');
-  blockItem.className = 'cleanfeed-menu-item';
-  blockItem.innerHTML = `
-    <div class="cleanfeed-cf-logo">CF</div>
-    <span>${chrome.i18n.getMessage('blockChannelPermanently')}</span>
-  `;
-
-  blockItem.addEventListener('click', async (e) => {
-    e.stopPropagation();
-    await handleBlockClick(channelInfo);
-  });
+  const separator = buildElement('div', { className: 'cleanfeed-menu-separator' });
+  const blockItem = createBlockMenuItem(channelInfo);
 
   const menuItems = listbox.querySelectorAll('ytd-menu-service-item-renderer, ytd-menu-navigation-item-renderer');
   let insertAfter = null;
@@ -361,7 +382,7 @@ async function handleBlockClick(channelInfo) {
       chrome.runtime.sendMessage({ action: 'openPaymentPage' });
     }, 2000);
   } else if (result.reason === 'already_blocked') {
-    showToast(`"${name}" is already blocked.`);
+    showToast('"' + name + '" is already blocked.');
   }
 }
 
@@ -426,42 +447,44 @@ function interceptSearch() {
   });
 }
 
+function createPromptButtons(query, userIsPro, onDismiss) {
+  const onceBtn = buildElement('button', {
+    className: 'cleanfeed-btn cleanfeed-btn-secondary',
+    textContent: chrome.i18n.getMessage('justOnce'),
+    onClick: onDismiss
+  });
+
+  const rememberBtn = buildElement('button', {
+    className: 'cleanfeed-btn cleanfeed-btn-primary',
+    textContent: chrome.i18n.getMessage('remember'),
+    onClick: async () => {
+      if (!userIsPro) {
+        onDismiss();
+        chrome.runtime.sendMessage({ action: 'openPaymentPage' });
+        return;
+      }
+      await chrome.runtime.sendMessage({ action: 'addInterest', query });
+      onDismiss();
+      showToast('Added "' + query + '" to your interests');
+    }
+  });
+
+  return buildElement('div', { className: 'cleanfeed-toast-buttons' }, [onceBtn, rememberBtn]);
+}
+
 function showInterestToast(query, userIsPro) {
   document.querySelector('.cleanfeed-toast')?.remove();
 
-  const toast = document.createElement('div');
-  toast.className = 'cleanfeed-toast';
-  toast.innerHTML = `
-    <div class="cleanfeed-toast-text">
-      <span class="cleanfeed-toast-brand">CleanFeed</span> —
-      ${chrome.i18n.getMessage('newSearch', [escapeHtml(query)])}
-    </div>
-    <div class="cleanfeed-toast-buttons">
-      <button class="cleanfeed-btn cleanfeed-btn-secondary" data-action="once">
-        ${chrome.i18n.getMessage('justOnce')}
-      </button>
-      <button class="cleanfeed-btn cleanfeed-btn-primary" data-action="remember">
-        ${chrome.i18n.getMessage('remember')}
-      </button>
-    </div>
-  `;
+  const brandSpan = buildElement('span', { className: 'cleanfeed-toast-brand', textContent: 'CleanFeed' });
+  const msgText = ' — ' + chrome.i18n.getMessage('newSearch', [query]);
+  const textDiv = buildElement('div', { className: 'cleanfeed-toast-text' }, [brandSpan, msgText]);
 
+  const toast = buildElement('div', { className: 'cleanfeed-toast' });
+  const buttons = createPromptButtons(query, userIsPro, () => dismissToast(toast));
+
+  toast.appendChild(textDiv);
+  toast.appendChild(buttons);
   document.body.appendChild(toast);
-
-  toast.querySelector('[data-action="once"]').addEventListener('click', () => {
-    dismissToast(toast);
-  });
-
-  toast.querySelector('[data-action="remember"]').addEventListener('click', async () => {
-    if (!userIsPro) {
-      dismissToast(toast);
-      chrome.runtime.sendMessage({ action: 'openPaymentPage' });
-      return;
-    }
-    await chrome.runtime.sendMessage({ action: 'addInterest', query });
-    dismissToast(toast);
-    showToast(`Added "${query}" to your interests`);
-  });
 
   setTimeout(() => dismissToast(toast), 8000);
 }
@@ -469,46 +492,23 @@ function showInterestToast(query, userIsPro) {
 function showInlineBanner(query, userIsPro) {
   document.querySelector('.cleanfeed-inline-banner')?.remove();
 
-  const banner = document.createElement('div');
-  banner.className = 'cleanfeed-inline-banner';
-  banner.innerHTML = `
-    <div class="cleanfeed-inline-banner-content">
-      <div class="cleanfeed-cf-logo">CF</div>
-      <div class="cleanfeed-inline-banner-text">
-        <strong>${chrome.i18n.getMessage('newSearch', [escapeHtml(query)])}</strong>
-        <br>
-        <span>${chrome.i18n.getMessage('rememberInterest')}</span>
-      </div>
-    </div>
-    <div class="cleanfeed-toast-buttons">
-      <button class="cleanfeed-btn cleanfeed-btn-secondary" data-action="once">
-        ${chrome.i18n.getMessage('justOnce')}
-      </button>
-      <button class="cleanfeed-btn cleanfeed-btn-primary" data-action="remember">
-        ${chrome.i18n.getMessage('remember')}
-      </button>
-    </div>
-  `;
+  const logo = buildElement('div', { className: 'cleanfeed-cf-logo', textContent: 'CF' });
+  const strong = buildElement('strong', { textContent: chrome.i18n.getMessage('newSearch', [query]) });
+  const br = document.createElement('br');
+  const subtitle = buildElement('span', { textContent: chrome.i18n.getMessage('rememberInterest') });
+  const textDiv = buildElement('div', { className: 'cleanfeed-inline-banner-text' }, [strong, br, subtitle]);
+  const content = buildElement('div', { className: 'cleanfeed-inline-banner-content' }, [logo, textDiv]);
+
+  const banner = buildElement('div', { className: 'cleanfeed-inline-banner' });
+  const buttons = createPromptButtons(query, userIsPro, () => banner.remove());
+
+  banner.appendChild(content);
+  banner.appendChild(buttons);
 
   const results = document.querySelector('ytd-section-list-renderer, ytd-search');
   if (results) {
     results.parentNode.insertBefore(banner, results);
   }
-
-  banner.querySelector('[data-action="once"]').addEventListener('click', () => {
-    banner.remove();
-  });
-
-  banner.querySelector('[data-action="remember"]').addEventListener('click', async () => {
-    if (!userIsPro) {
-      banner.remove();
-      chrome.runtime.sendMessage({ action: 'openPaymentPage' });
-      return;
-    }
-    await chrome.runtime.sendMessage({ action: 'addInterest', query });
-    banner.remove();
-    showToast(`Added "${query}" to your interests`);
-  });
 
   setTimeout(() => banner.remove(), 10000);
 }
@@ -524,11 +524,8 @@ function dismissToast(toast) {
 function showToast(message, duration = 4000) {
   document.querySelector('.cleanfeed-toast')?.remove();
 
-  const toast = document.createElement('div');
-  toast.className = 'cleanfeed-toast';
-  toast.innerHTML = `
-    <div class="cleanfeed-toast-text">${escapeHtml(message)}</div>
-  `;
+  const textDiv = buildElement('div', { className: 'cleanfeed-toast-text', textContent: message });
+  const toast = buildElement('div', { className: 'cleanfeed-toast' }, [textDiv]);
 
   document.body.appendChild(toast);
 
