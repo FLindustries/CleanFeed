@@ -14,10 +14,8 @@ extpay.startBackground();
 chrome.runtime.onInstalled.addListener(async (details) => {
   await Storage.init();
 
-  if (details.reason === 'install') {
-    // Set up smart decay alarm (fires every 24 hours)
-    chrome.alarms.create('smartDecay', { periodInMinutes: 24 * 60 });
-  }
+  // Set up smart decay alarm (fires every 24 hours) — on install and update
+  chrome.alarms.create('smartDecay', { periodInMinutes: 24 * 60 });
 });
 
 // --- Alarms ---
