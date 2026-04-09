@@ -16,8 +16,9 @@
   let debounceTimer = null;
   let observer = null;
   let lastClickedVideoCard = null;
-  let searchIntercepted = false;
+  // searchIntercepted — now tracked via data-cf-search-intercepted on the input element
   let activeJustNowQueries = new Set();
+  const loggedVideos = new Set(); // dedup: track title+channel combos already logged
 
   // ── Helpers ────────────────────────────────────────────────────────────
 
@@ -111,7 +112,6 @@
 
   function hideBlockedContent() {
     const cards = document.querySelectorAll(YT.VIDEO_CARDS);
-    let hiddenCount = 0;
 
     for (const card of cards) {
       if (card.dataset.cfChecked) continue;
@@ -123,7 +123,6 @@
       // Channel blocking
       if (channelLower && blockedChannelNames.has(channelLower)) {
         card.classList.add('cleanfeed-hidden');
-        hiddenCount++;
         logHidden(card, 'channel', channelName);
         continue;
       }
@@ -131,7 +130,6 @@
       // Keyword blocking
       const title = YT.getVideoTitle(card) || '';
       const desc = YT.getVideoDescription(card);
-      let hidden = false;
 
       for (const kw of blockedKeywords) {
         const keyword = kw.keyword;
@@ -142,16 +140,10 @@
           if (matchesJustNow(title, desc)) continue;
 
           card.classList.add('cleanfeed-hidden');
-          hiddenCount++;
           logHidden(card, 'keyword', keyword);
-          hidden = true;
           break;
         }
       }
-    }
-
-    if (hiddenCount > 0) {
-      sendMsg({ action: 'incrementStat', stat: 'videosHidden', amount: hiddenCount });
     }
 
     // Subscription Exception: check if keyword blocks hit subscribed channels
@@ -167,11 +159,18 @@
     // Get subscribed channel names from the sidebar
     const subscribedNames = new Set();
     const sidebarEntries = document.querySelectorAll(
-      '#guide-section-renderer ytd-guide-entry-renderer a[href^="/@"], ' +
-      '#sections ytd-guide-entry-renderer a[href^="/@"]'
+      // 2025 YouTube sidebar selectors
+      'ytd-guide-section-renderer ytd-guide-entry-renderer a[href^="/@"], ' +
+      '#sections ytd-guide-entry-renderer a[href^="/@"], ' +
+      'ytd-guide-subscriptions-section-renderer ytd-guide-entry-renderer a[href^="/@"], ' +
+      // Mini guide (collapsed sidebar)
+      'ytd-mini-guide-entry-renderer a[href^="/@"], ' +
+      // Generic fallback
+      '#guide-content a[href^="/@"]'
     );
     for (const entry of sidebarEntries) {
       const name = entry.querySelector('.title')?.textContent?.trim() ||
+                   entry.querySelector('yt-formatted-string')?.textContent?.trim() ||
                    entry.getAttribute('title') ||
                    entry.textContent?.trim();
       if (name) subscribedNames.add(name.toLowerCase());
@@ -235,6 +234,11 @@
   function logHidden(card, type, value) {
     const title = YT.getVideoTitle(card) || '';
     const channel = YT.getChannelName(card) || '';
+    const dedupKey = (title + '||' + channel).toLowerCase();
+    if (loggedVideos.has(dedupKey)) return;
+    loggedVideos.add(dedupKey);
+
+    sendMsg({ action: 'incrementStat', stat: 'videosHidden', amount: 1 });
     sendMsg({
       action: 'logHiddenVideo',
       title,
@@ -251,7 +255,7 @@
     observer = new MutationObserver(() => {
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
-        hideBlockedContent();
+        filterPage();
       }, 200);
     });
 
@@ -296,7 +300,7 @@
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ['style', 'focused_', 'aria-hidden'],
+      attributeFilter: ['style', 'focused_', 'aria-hidden', 'class', 'opened', 'aria-expanded'],
     });
   }
 
@@ -411,9 +415,26 @@
     const channelId = YT.getPageChannelId();
     if (!channelName) return;
 
-    const container = document.querySelector(
-      '#subscribe-button, ytd-subscribe-button-renderer, #channel-header-container .buttons-container'
-    );
+    // Try multiple container selectors for YouTube's evolving channel page layout
+    const containerSelectors = [
+      '#subscribe-button',
+      'ytd-subscribe-button-renderer',
+      '#channel-header-container .buttons-container',
+      // 2025 layout: header buttons area
+      'ytd-c4-tabbed-header-renderer #buttons',
+      'ytd-c4-tabbed-header-renderer #inner-header-container #buttons',
+      '#inner-header-container yt-flexible-actions-view-model',
+      // Fallback: find the subscribe button directly and use its parent
+      '#page-header yt-button-view-model button[aria-label]',
+      '#channel-header #subscribe-button',
+      '#header-container .buttons-container',
+    ];
+
+    let container = null;
+    for (const sel of containerSelectors) {
+      container = document.querySelector(sel);
+      if (container) break;
+    }
     if (!container) return;
 
     const btn = cfEl(
@@ -425,22 +446,25 @@
       [cfLogo(), cfEl('span', { textContent: msg('blockThisChannel') })]
     );
 
-    container.parentNode.insertBefore(btn, container.nextSibling);
+    // Insert after the container (or after its parent if container is a button element)
+    const insertTarget = container.tagName === 'BUTTON' ? container.parentNode : container;
+    insertTarget.parentNode.insertBefore(btn, insertTarget.nextSibling);
   }
 
   // ── Search Intercept (Interest Boundaries) ────────────────────────────
 
   function interceptSearch() {
-    if (searchIntercepted) return;
-
-    const searchInput = document.querySelector('input#search');
+    // Try multiple selectors for the search input
+    const searchInput = document.querySelector('input#search') ||
+                        document.querySelector('input[name="search_query"]') ||
+                        document.querySelector('ytd-searchbox input');
     if (!searchInput) return;
 
-    searchIntercepted = true;
+    // Avoid double-attaching to the same DOM element
+    if (searchInput.dataset.cfSearchIntercepted) return;
+    searchInput.dataset.cfSearchIntercepted = 'true';
 
-    searchInput.addEventListener('keypress', async (e) => {
-      if (e.key !== 'Enter') return;
-
+    async function handleSearch() {
       const query = searchInput.value.trim();
       if (!query) return;
 
@@ -454,7 +478,38 @@
           );
         }, 500);
       }
+    }
+
+    // Use keydown instead of keypress (keypress is deprecated and may not fire for Enter)
+    searchInput.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      handleSearch();
     });
+
+    // Also intercept the search button click
+    const searchBtn = document.querySelector('#search-icon-legacy, button[aria-label="Search"], ytd-searchbox button');
+    if (searchBtn) {
+      searchBtn.addEventListener('click', () => {
+        handleSearch();
+      });
+    }
+
+    // Also detect search via SPA navigation (URL changes to /results)
+    // This is handled via onNavigate -> interceptSearch, but we also need to
+    // check if we just navigated TO a search page and should prompt
+    if (window.location.pathname === '/results') {
+      const params = new URLSearchParams(window.location.search);
+      const query = params.get('search_query');
+      if (query) {
+        // Small delay to let page render
+        setTimeout(async () => {
+          const result = await sendMsg({ action: 'checkInterest', query });
+          if (result.shouldPrompt) {
+            showCuriosityPrompt(result.query, result.isPro, result.useInlineBanner);
+          }
+        }, 800);
+      }
+    }
   }
 
   // ── Curiosity Window Prompt ───────────────────────────────────────────

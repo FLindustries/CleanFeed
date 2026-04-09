@@ -1,6 +1,7 @@
 // CleanFeed Popup Script
 
 let state = {};
+let settingsUpdateInFlight = false;
 
 document.addEventListener('DOMContentLoaded', async () => {
   await loadState();
@@ -47,22 +48,28 @@ function renderControls() {
 
   // Toggle: Hide Shorts (Free)
   container.appendChild(createToggle('hideShorts', 'hideShortsDesc', state.settings?.hideShorts, false, async (val) => {
+    settingsUpdateInFlight = true;
     await chrome.runtime.sendMessage({ action: 'updateSetting', key: 'hideShorts', value: val });
     state.settings.hideShorts = val;
+    settingsUpdateInFlight = false;
   }));
 
   // Toggle: Interest Boundaries (Pro)
   container.appendChild(createToggle('interestBoundaries', 'interestBoundariesDesc', state.settings?.enableInterestBoundaries, !state.isPro, async (val) => {
     if (!state.isPro) { chrome.runtime.sendMessage({ action: 'openPaymentPage' }); return; }
+    settingsUpdateInFlight = true;
     await chrome.runtime.sendMessage({ action: 'updateSetting', key: 'enableInterestBoundaries', value: val });
     state.settings.enableInterestBoundaries = val;
+    settingsUpdateInFlight = false;
   }));
 
   // Toggle: Smart Decay (Pro)
   container.appendChild(createToggle('smartDecay', 'smartDecayDesc', state.settings?.enableSmartDecay, !state.isPro, async (val) => {
     if (!state.isPro) { chrome.runtime.sendMessage({ action: 'openPaymentPage' }); return; }
+    settingsUpdateInFlight = true;
     await chrome.runtime.sendMessage({ action: 'updateSetting', key: 'enableSmartDecay', value: val });
     state.settings.enableSmartDecay = val;
+    settingsUpdateInFlight = false;
   }));
 
   // Upgrade CTA (free users only)
@@ -411,8 +418,22 @@ function setupTabs() {
   });
 }
 
-// Live updates
-chrome.storage.onChanged.addListener(async () => {
+// Live updates — skip re-render for stat-only changes and in-flight settings updates
+chrome.storage.onChanged.addListener(async (changes) => {
+  const keys = Object.keys(changes);
+  const statOnly = keys.length === 1 && keys[0] === 'stats';
+  if (statOnly) {
+    // Just update the stat counters without rebuilding the whole UI
+    const newStats = changes.stats.newValue;
+    if (newStats) {
+      document.getElementById('statBlocked').textContent = newStats.channelsBlocked || 0;
+      document.getElementById('statHidden').textContent = newStats.videosHidden || 0;
+      document.getElementById('statInterests').textContent = newStats.interestsSaved || 0;
+    }
+    return;
+  }
+  // Skip re-render if we're mid-toggle update to avoid reverting visual state
+  if (settingsUpdateInFlight && keys.length === 1 && keys[0] === 'settings') return;
   await loadState();
   renderAll();
 });

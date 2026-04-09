@@ -90,12 +90,19 @@ const YT = {
   },
 
   getPageChannelName() {
+    // On channel pages, extract from URL as fallback
     const selectors = [
       'ytd-video-owner-renderer a[href^="/@"]',
       'ytd-channel-name.ytd-video-owner-renderer a',
       '#owner #channel-name a',
       '#channel-header ytd-channel-name a',
-      'yt-dynamic-text-view-model.ytChannelNameViewModelHost'
+      'yt-dynamic-text-view-model.ytChannelNameViewModelHost',
+      // 2025 channel page selectors
+      'ytd-c4-tabbed-header-renderer #channel-name',
+      'ytd-c4-tabbed-header-renderer #text',
+      '#page-header yt-dynamic-text-view-model',
+      '#inner-header-container yt-formatted-string#text',
+      'ytd-c4-tabbed-header-renderer ytd-channel-name yt-formatted-string',
     ];
     for (const sel of selectors) {
       const el = document.querySelector(sel);
@@ -104,16 +111,25 @@ const YT = {
         if (text) return text;
       }
     }
+    // Fallback: extract from URL path
+    const pathMatch = window.location.pathname.match(/^\/@(.+)/);
+    if (pathMatch) return decodeURIComponent(pathMatch[1]);
     return null;
   },
 
   getPageChannelId() {
     const link = document.querySelector(
-      'ytd-video-owner-renderer a[href^="/@"], #channel-header a[href^="/@"]'
+      'ytd-video-owner-renderer a[href^="/@"], #channel-header a[href^="/@"], ytd-c4-tabbed-header-renderer a[href^="/@"]'
     );
     const href = link?.getAttribute('href') || '';
     const match = href.match(/@([^\/\?]+)/);
-    return match ? '@' + match[1] : null;
+    if (match) return '@' + match[1];
+    // Fallback: extract from URL
+    const pathMatch = window.location.pathname.match(/^\/@(.+)/);
+    if (pathMatch) return '@' + pathMatch[1];
+    const channelMatch = window.location.pathname.match(/\/channel\/(.+)/);
+    if (channelMatch) return channelMatch[1];
+    return null;
   },
 
   isChannelPage() {
@@ -121,7 +137,17 @@ const YT = {
   },
 
   getMenuPopup() {
-    return document.querySelector('tp-yt-iron-dropdown yt-sheet-view-model') ||
+    // Check for visible/open popups — YouTube may have multiple tp-yt-iron-dropdown
+    // but only the one with display!=none or the [aria-expanded] one is active
+    const dropdowns = document.querySelectorAll('tp-yt-iron-dropdown');
+    for (const dd of dropdowns) {
+      // Skip hidden dropdowns
+      const style = window.getComputedStyle(dd);
+      if (style.display === 'none' || style.visibility === 'hidden') continue;
+      const sheet = dd.querySelector('yt-sheet-view-model');
+      if (sheet) return sheet;
+    }
+    return document.querySelector('ytd-popup-container ytd-menu-popup-renderer[style*="display"]') ||
            document.querySelector('ytd-popup-container ytd-menu-popup-renderer');
   },
 
