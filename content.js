@@ -23,7 +23,11 @@
   // ── Helpers ────────────────────────────────────────────────────────────
 
   function msg(key, subs) {
-    return chrome.i18n.getMessage(key, subs) || key;
+    try {
+      return chrome.i18n?.getMessage(key, subs) || key;
+    } catch (e) {
+      return key;
+    }
   }
 
   function sendMsg(payload) {
