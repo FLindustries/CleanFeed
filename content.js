@@ -205,8 +205,10 @@ function removeSearchOnlyMode() {
 // --- YouTube Menu Injection ---
 
 function watchForMenuPopup() {
+  // Strategy 1: Watch for new nodes being added (some YouTube versions)
   const menuObserver = new MutationObserver((mutations) => {
     for (const mutation of mutations) {
+      // Check added nodes
       for (const node of mutation.addedNodes) {
         if (node.nodeType !== 1) continue;
         const popup = node.tagName === 'YTD-MENU-POPUP-RENDERER'
@@ -216,12 +218,30 @@ function watchForMenuPopup() {
           injectBlockOption(popup);
         }
       }
+
+      // Check attribute changes (menu becoming visible)
+      if (mutation.type === 'attributes' && mutation.target.tagName === 'TP-YT-IRON-DROPDOWN') {
+        if (mutation.target.hasAttribute('focused_') || mutation.target.style.display !== 'none') {
+          const popup = mutation.target.querySelector('ytd-menu-popup-renderer');
+          if (popup) {
+            injectBlockOption(popup);
+          }
+        }
+      }
+    }
+
+    // Strategy 2: Check for any visible popup on any mutation
+    const visiblePopup = document.querySelector('ytd-popup-container ytd-menu-popup-renderer');
+    if (visiblePopup) {
+      injectBlockOption(visiblePopup);
     }
   });
 
   menuObserver.observe(document.body, {
     childList: true,
-    subtree: true
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['style', 'focused_', 'aria-hidden']
   });
 }
 
