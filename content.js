@@ -8,6 +8,7 @@ let isPro = false;
 let debounceTimer = null;
 let observer = null;
 let searchIntercepted = false;
+let lastClickedVideoCard = null; // Track which video's menu was opened
 
 // --- Initialization ---
 
@@ -19,6 +20,7 @@ async function init() {
   filterPage();
   startObserver();
   watchForMenuPopup();
+  trackMenuButtonClicks();
   interceptSearch();
 
   // Re-check on YouTube SPA navigation
@@ -394,42 +396,34 @@ async function handleBlockClick(channelInfo) {
   }
 }
 
+// Track clicks on YouTube's three-dot menu buttons to know which video triggered the menu
+function trackMenuButtonClicks() {
+  document.addEventListener('click', (e) => {
+    const videoSelectors = 'ytd-video-renderer, ytd-rich-item-renderer, ytd-compact-video-renderer, ytd-grid-video-renderer';
+    // Check if the click was on a menu button (three-dot icon) inside a video card
+    const button = e.target.closest('button, yt-icon-button, ytd-menu-renderer');
+    if (button) {
+      const card = button.closest(videoSelectors);
+      if (card) {
+        lastClickedVideoCard = card;
+      }
+    }
+  }, true); // capture phase to run before YouTube's handlers
+}
+
 function findChannelForActiveMenu() {
-  // The three-dot button that was clicked — try multiple strategies
   const videoSelectors = 'ytd-video-renderer, ytd-rich-item-renderer, ytd-compact-video-renderer, ytd-grid-video-renderer';
 
-  // Strategy 1: activeElement might be the button or inside the video card
-  let videoCard = document.activeElement?.closest(videoSelectors);
+  // Strategy 1: use the tracked video card from the click event
+  let videoCard = lastClickedVideoCard;
 
-  // Strategy 2: find the most recently hovered/focused video card with a visible menu button
+  // Strategy 2: activeElement might be inside the video card
   if (!videoCard) {
-    const menuButtons = document.querySelectorAll('ytd-rich-item-renderer button[aria-label], ytd-video-renderer button[aria-label]');
-    for (const btn of menuButtons) {
-      if (btn.offsetParent !== null) { // visible
-        const card = btn.closest(videoSelectors);
-        if (card) {
-          videoCard = card;
-          break;
-        }
-      }
-    }
-  }
-
-  // Strategy 3: find the video card that contains the active popup's trigger
-  if (!videoCard) {
-    const popupContainer = document.querySelector('ytd-popup-container');
-    if (popupContainer) {
-      // YouTube stores which element triggered the popup
-      const trigger = popupContainer.__data?.triggerElement || popupContainer.triggerElement_;
-      if (trigger) {
-        videoCard = trigger.closest(videoSelectors);
-      }
-    }
+    videoCard = document.activeElement?.closest(videoSelectors);
   }
 
   if (videoCard) {
     const name = extractChannelName(videoCard);
-    // Get channel ID from link
     const linkEl = videoCard.querySelector('a[href^="/@"], #channel-name a, ytd-channel-name a');
     const href = linkEl?.getAttribute('href') || '';
     const idMatch = href.match(/\/(channel|c|user|@)([^\/\?]+)/);
