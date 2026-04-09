@@ -153,6 +153,65 @@
     if (hiddenCount > 0) {
       sendMsg({ action: 'incrementStat', stat: 'videosHidden', amount: hiddenCount });
     }
+
+    // Subscription Exception: check if keyword blocks hit subscribed channels
+    checkSubscriptionExceptions();
+  }
+
+  // Track which keyword-blocked channels we've already prompted about
+  const promptedSubscriptionExceptions = new Set();
+
+  function checkSubscriptionExceptions() {
+    if (!isPro && blockedKeywords.length === 0) return;
+
+    // Get subscribed channel names from the sidebar
+    const subscribedNames = new Set();
+    const sidebarEntries = document.querySelectorAll(
+      '#guide-section-renderer ytd-guide-entry-renderer a[href^="/@"], ' +
+      '#sections ytd-guide-entry-renderer a[href^="/@"]'
+    );
+    for (const entry of sidebarEntries) {
+      const name = entry.querySelector('.title')?.textContent?.trim() ||
+                   entry.getAttribute('title') ||
+                   entry.textContent?.trim();
+      if (name) subscribedNames.add(name.toLowerCase());
+    }
+
+    if (subscribedNames.size === 0) return;
+
+    // For each keyword, find subscribed channels that were hidden
+    for (const kw of blockedKeywords) {
+      const keyword = kw.keyword;
+      const promptKey = keyword;
+      if (promptedSubscriptionExceptions.has(promptKey)) continue;
+
+      const affectedChannels = [];
+      const cards = document.querySelectorAll(YT.VIDEO_CARDS + '.cleanfeed-hidden');
+      for (const card of cards) {
+        const channelName = YT.getChannelName(card);
+        if (!channelName) continue;
+        if (!subscribedNames.has(channelName.toLowerCase())) continue;
+        if (isWhitelisted(channelName, keyword)) continue;
+
+        // This card was hidden by this keyword and the channel is subscribed
+        const title = YT.getVideoTitle(card) || '';
+        const desc = YT.getVideoDescription(card);
+        if (matchesKeyword(title, keyword) || matchesKeyword(desc, keyword)) {
+          if (!affectedChannels.some(c => c.name.toLowerCase() === channelName.toLowerCase())) {
+            affectedChannels.push({
+              name: channelName,
+              id: YT.getChannelId(card)
+            });
+          }
+        }
+      }
+
+      if (affectedChannels.length > 0) {
+        promptedSubscriptionExceptions.add(promptKey);
+        showSubscriptionExceptionToast(affectedChannels, keyword);
+        break; // Only show one toast at a time
+      }
+    }
   }
 
   function isWhitelisted(channelName, keyword) {
