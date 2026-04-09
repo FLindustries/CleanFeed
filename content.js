@@ -463,10 +463,11 @@
         channelId = href.startsWith('/@') ? href.substring(1) : href.replace('/channel/', '');
       }
 
-      // Container: the subscribe button within this owner renderer's parent
-      container = ownerRenderer.querySelector('#subscribe-button') ||
+      // Container: subscribe button is a SIBLING of owner renderer, not inside it
+      // Both live under #owner div
+      container = ownerRenderer.closest('#owner')?.querySelector('#subscribe-button') ||
                   ownerRenderer.parentElement?.querySelector('#subscribe-button') ||
-                  ownerRenderer.closest('#owner')?.querySelector('#subscribe-button');
+                  ownerRenderer.querySelector('#subscribe-button');
     } else {
       // Channel page
       channelName = YT.getPageChannelName();
