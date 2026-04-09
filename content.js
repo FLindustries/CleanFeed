@@ -28,9 +28,19 @@
 
   function sendMsg(payload) {
     return new Promise((resolve) => {
-      chrome.runtime.sendMessage(payload, (resp) => {
-        resolve(resp || {});
-      });
+      try {
+        chrome.runtime.sendMessage(payload, (resp) => {
+          if (chrome.runtime.lastError) {
+            // Extension was reloaded — silently ignore
+            resolve({});
+            return;
+          }
+          resolve(resp || {});
+        });
+      } catch (e) {
+        // Extension context invalidated — silently ignore
+        resolve({});
+      }
     });
   }
 
