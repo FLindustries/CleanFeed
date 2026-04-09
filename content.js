@@ -156,6 +156,18 @@
       }
     }
 
+    // Also hide blocked channels in search results (channel cards, not just video cards)
+    document.querySelectorAll('ytd-channel-renderer').forEach((card) => {
+      if (card.dataset.cfChecked) return;
+      card.dataset.cfChecked = 'true';
+
+      const nameEl = card.querySelector('#channel-title, #text a, a[href^="/@"]');
+      const name = nameEl?.textContent?.trim()?.toLowerCase();
+      if (name && blockedChannelNames.has(name)) {
+        card.classList.add('cleanfeed-hidden');
+      }
+    });
+
     // Subscription Exception: check if keyword blocks hit subscribed channels
     checkSubscriptionExceptions();
   }
@@ -464,10 +476,12 @@
       }
 
       // Container: subscribe button is a SIBLING of owner renderer, not inside it
-      // Both live under #owner div
+      // Both live under #owner div. Try multiple locations.
       container = ownerRenderer.closest('#owner')?.querySelector('#subscribe-button') ||
                   ownerRenderer.parentElement?.querySelector('#subscribe-button') ||
-                  ownerRenderer.querySelector('#subscribe-button');
+                  ownerRenderer.querySelector('#subscribe-button') ||
+                  // Fallback: use the owner renderer itself as container
+                  ownerRenderer;
     } else {
       // Channel page
       channelName = YT.getPageChannelName();
