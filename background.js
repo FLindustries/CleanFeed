@@ -6,8 +6,25 @@ importScripts('storage.js');
 // Initialize ExtensionPay
 // IMPORTANT: Replace 'cleanfeed' with your actual ExtensionPay extension ID
 // after registering at https://extensionpay.com
-const extpay = ExtPay('cleanfeed');
-extpay.startBackground();
+let extpay;
+try {
+  extpay = ExtPay('cleanfeed');
+  extpay.startBackground();
+} catch (e) {
+  console.warn('CleanFeed: ExtensionPay init failed (not registered yet?):', e);
+}
+
+// Helper: safely check Pro status (returns false if ExtPay not ready)
+async function checkProStatus() {
+  try {
+    if (!extpay) return false;
+    const user = await extpay.getUser();
+    return user?.paid === true;
+  } catch (e) {
+    // ExtPay not registered yet or network error — treat as free user
+    return false;
+  }
+}
 
 // --- Install / Update ---
 
@@ -22,10 +39,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === 'smartDecay') {
-    // Re-declare extpay in callback scope (MV3 service worker requirement)
-    const extpayLocal = ExtPay('cleanfeed');
-    const user = await extpayLocal.getUser().catch(() => null);
-    const isPro = user?.paid === true;
+    const isPro = await checkProStatus();
 
     if (!isPro) return; // Smart decay is Pro-only
 
@@ -48,16 +62,20 @@ chrome.runtime.onStartup.addListener(() => {
 // --- Message Handling ---
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  handleMessage(request).then(sendResponse);
+  // Ignore ExtPay internal messages
+  if (typeof request === 'string' && request.startsWith('extpay-')) return;
+
+  handleMessage(request).then(sendResponse).catch(err => {
+    console.error('CleanFeed message handler error:', err);
+    sendResponse({ error: err.message });
+  });
   return true; // Keep channel open for async response
 });
 
 async function handleMessage(request) {
   switch (request.action) {
     case 'blockChannel': {
-      const extpayLocal = ExtPay('cleanfeed');
-      const user = await extpayLocal.getUser().catch(() => null);
-      const isPro = user?.paid === true;
+      const isPro = await checkProStatus();
       const channels = await Storage.getBlockedChannels();
 
       if (!isPro && channels.length >= Storage.FREE_CHANNEL_LIMIT) {
@@ -68,9 +86,7 @@ async function handleMessage(request) {
     }
 
     case 'checkInterest': {
-      const extpayLocal = ExtPay('cleanfeed');
-      const user = await extpayLocal.getUser().catch(() => null);
-      const isPro = user?.paid === true;
+      const isPro = await checkProStatus();
 
       const settings = await Storage.getSettings();
       const onboarding = await Storage.getOnboarding();
@@ -111,10 +127,7 @@ async function handleMessage(request) {
       const blockedChannels = await Storage.getBlockedChannels();
       const interests = await Storage.getInterests();
       const onboarding = await Storage.getOnboarding();
-
-      const extpayLocal = ExtPay('cleanfeed');
-      const user = await extpayLocal.getUser().catch(() => null);
-      const isPro = user?.paid === true;
+      const isPro = await checkProStatus();
 
       return { settings, stats, blockedChannels, interests, onboarding, isPro };
     }
@@ -151,8 +164,16 @@ async function handleMessage(request) {
     }
 
     case 'openPaymentPage': {
-      const extpayLocal = ExtPay('cleanfeed');
-      extpayLocal.openPaymentPage();
+      try {
+        if (extpay) {
+          extpay.openPaymentPage();
+        } else {
+          // Fallback: open ExtensionPay directly
+          chrome.tabs.create({ url: 'https://extensionpay.com' });
+        }
+      } catch (e) {
+        console.warn('CleanFeed: Could not open payment page:', e);
+      }
       return { success: true };
     }
 
