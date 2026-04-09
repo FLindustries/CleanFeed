@@ -156,17 +156,43 @@
       }
     }
 
-    // Also hide blocked channels in search results (channel cards, not just video cards)
-    document.querySelectorAll('ytd-channel-renderer').forEach((card) => {
-      if (card.dataset.cfChecked) return;
-      card.dataset.cfChecked = 'true';
-
-      const nameEl = card.querySelector('#channel-title, #text a, a[href^="/@"]');
+    // Hide blocked channels EVERYWHERE — search results, Shorts, shelves, etc.
+    // Channel result cards in search
+    document.querySelectorAll('ytd-channel-renderer').forEach((el) => {
+      if (el.dataset.cfChecked) return;
+      el.dataset.cfChecked = 'true';
+      const nameEl = el.querySelector('#channel-title, #text a, a[href^="/@"], yt-formatted-string');
       const name = nameEl?.textContent?.trim()?.toLowerCase();
       if (name && blockedChannelNames.has(name)) {
-        card.classList.add('cleanfeed-hidden');
+        el.classList.add('cleanfeed-hidden');
       }
     });
+
+    // If we're on a blocked channel's page, hide ALL their content
+    if (YT.isChannelPage()) {
+      const pageChannel = YT.getPageChannelName();
+      if (pageChannel && blockedChannelNames.has(pageChannel.toLowerCase())) {
+        // Hide the entire page content section
+        const content = document.querySelector('ytd-two-column-browse-results-renderer, #contents.ytd-section-list-renderer, ytd-browse #content');
+        if (content && !content.dataset.cfBlocked) {
+          content.dataset.cfBlocked = 'true';
+          content.classList.add('cleanfeed-hidden');
+          // Show a message that this channel is blocked
+          if (!document.getElementById('cf-channel-blocked-msg')) {
+            const msg_el = cfEl('div', {
+              id: 'cf-channel-blocked-msg',
+              className: 'cleanfeed-toast',
+              style: 'position:relative;margin:40px auto;max-width:500px;bottom:auto;left:auto;transform:none;animation:none;justify-content:center;'
+            }, [
+              cfLogo(),
+              cfEl('span', { textContent: 'This channel is blocked by CleanFeed' })
+            ]);
+            const pageManager = document.querySelector('ytd-page-manager, #page-manager');
+            if (pageManager) pageManager.prepend(msg_el);
+          }
+        }
+      }
+    }
 
     // Subscription Exception: check if keyword blocks hit subscribed channels
     checkSubscriptionExceptions();
@@ -433,6 +459,25 @@
       delete el.dataset.cfChecked;
     });
     filterPage();
+
+    // If on a channel page of the blocked channel, go back to homepage
+    if (YT.isChannelPage()) {
+      const pageChannel = YT.getPageChannelName();
+      if (pageChannel && pageChannel.toLowerCase() === name.toLowerCase()) {
+        setTimeout(() => { window.location.href = 'https://www.youtube.com'; }, 1500);
+        return;
+      }
+    }
+
+    // If on watch page of blocked channel, go back to homepage
+    if (window.location.pathname === '/watch') {
+      const watchChannel = document.querySelector('ytd-video-owner-renderer ytd-channel-name yt-formatted-string a');
+      const watchName = watchChannel?.textContent?.trim();
+      if (watchName && watchName.toLowerCase() === name.toLowerCase()) {
+        setTimeout(() => { window.location.href = 'https://www.youtube.com'; }, 1500);
+        return;
+      }
+    }
 
     // If on watch page, hide sidebar videos from this channel immediately
     if (window.location.pathname === '/watch') {
