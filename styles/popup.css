@@ -1,0 +1,494 @@
+/* ============================================================
+   CleanFeed Popup Styles
+   ============================================================ */
+
+/* --- Base --- */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  width: 380px;
+  min-height: 480px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 14px;
+  color: #0f0f0f;
+  background: #ffffff;
+  overflow-x: hidden;
+}
+
+/* ============================================================
+   Header (always dark)
+   ============================================================ */
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #0f0f0f;
+  padding: 12px 16px;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cf-logo {
+  width: 22px;
+  height: 22px;
+  background: #3ea6ff;
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 700;
+  color: #ffffff;
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+
+.header-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.header-badge {
+  background: rgba(62, 166, 255, 0.15);
+  color: #3ea6ff;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  padding: 3px 8px;
+  border-radius: 20px;
+  text-transform: uppercase;
+}
+
+.header-badge.badge-pro {
+  background: rgba(62, 166, 255, 0.25);
+  color: #3ea6ff;
+}
+
+/* ============================================================
+   Stats Row
+   ============================================================ */
+
+.stats-row {
+  display: flex;
+  align-items: center;
+  background: #f8f9fa;
+  padding: 12px 0;
+}
+
+.stat {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.stat-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: #0f0f0f;
+  line-height: 1;
+}
+
+.stat-label {
+  font-size: 10px;
+  font-weight: 500;
+  color: #909090;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.stat-divider {
+  width: 1px;
+  height: 28px;
+  background: #e0e0e0;
+  flex-shrink: 0;
+}
+
+/* ============================================================
+   Tab Bar
+   ============================================================ */
+
+.tab-bar {
+  display: flex;
+  border-bottom: 1px solid #e0e0e0;
+  background: #ffffff;
+}
+
+.tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 10px 8px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  font-size: 13px;
+  font-weight: 500;
+  color: #909090;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+  margin-bottom: -1px;
+}
+
+.tab:hover {
+  color: #0f0f0f;
+}
+
+.tab.active {
+  color: #3ea6ff;
+  border-bottom-color: #3ea6ff;
+}
+
+/* ============================================================
+   PRO Badges
+   ============================================================ */
+
+.pro-badge {
+  display: none;
+  font-size: 8px;
+  font-weight: 700;
+  background: #3ea6ff;
+  color: #ffffff;
+  padding: 2px 5px;
+  border-radius: 20px;
+  letter-spacing: 0.5px;
+  vertical-align: middle;
+}
+
+.pro-badge-inline {
+  display: none;
+  font-size: 8px;
+  font-weight: 700;
+  background: #3ea6ff;
+  color: #ffffff;
+  padding: 2px 5px;
+  border-radius: 20px;
+  letter-spacing: 0.5px;
+  vertical-align: middle;
+  margin-left: 4px;
+}
+
+/* ============================================================
+   Tab Content
+   ============================================================ */
+
+.tab-content {
+  display: none;
+  padding: 12px 16px 16px;
+}
+
+.tab-content.active {
+  display: block;
+}
+
+/* ============================================================
+   Toggle Items
+   ============================================================ */
+
+.toggle-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 0;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.toggle-item:last-of-type {
+  border-bottom: none;
+}
+
+.toggle-info {
+  flex: 1;
+  padding-right: 12px;
+}
+
+.toggle-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #0f0f0f;
+  margin-bottom: 2px;
+  display: flex;
+  align-items: center;
+}
+
+.toggle-desc {
+  font-size: 11px;
+  color: #909090;
+  line-height: 1.4;
+}
+
+/* Toggle Switch */
+
+.toggle-switch {
+  position: relative;
+  width: 44px;
+  height: 24px;
+  background: #cccccc;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+
+.toggle-switch.active {
+  background: #3ea6ff;
+}
+
+.toggle-switch.locked {
+  opacity: 0.4;
+  cursor: pointer;
+}
+
+.toggle-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  background: #ffffff;
+  border-radius: 50%;
+  transition: transform 0.2s;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.toggle-switch.active .toggle-knob {
+  transform: translateX(20px);
+}
+
+/* ============================================================
+   Upgrade CTA
+   ============================================================ */
+
+.upgrade-cta {
+  display: none;
+  margin-top: 16px;
+  padding: 16px;
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+  border-radius: 10px;
+  text-align: center;
+}
+
+.upgrade-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #ffffff;
+  margin-bottom: 4px;
+}
+
+.upgrade-subtitle {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.65);
+  margin-bottom: 12px;
+  line-height: 1.4;
+}
+
+.upgrade-btn {
+  display: inline-block;
+  padding: 9px 18px;
+  background: #3ea6ff;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 600;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+}
+
+.upgrade-btn:hover {
+  background: #2d95ee;
+  transform: translateY(-1px);
+}
+
+.upgrade-btn:active {
+  transform: translateY(0);
+}
+
+/* ============================================================
+   Blocked List & Interests List
+   ============================================================ */
+
+.blocked-list,
+.interests-list {
+  margin-bottom: 12px;
+}
+
+.list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #f8f9fa;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 6px;
+}
+
+.list-item:last-child {
+  margin-bottom: 0;
+}
+
+.list-item-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.list-item-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: #0f0f0f;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.list-item-meta {
+  font-size: 11px;
+  color: #909090;
+}
+
+.list-item-remove {
+  background: none;
+  border: none;
+  font-size: 16px;
+  line-height: 1;
+  color: #909090;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+  flex-shrink: 0;
+  margin-left: 8px;
+}
+
+.list-item-remove:hover {
+  color: #ff4444;
+  background: rgba(255, 68, 68, 0.08);
+}
+
+/* ============================================================
+   Empty State
+   ============================================================ */
+
+.empty-state {
+  text-align: center;
+  padding: 32px 16px;
+  color: #909090;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* ============================================================
+   Clear All Button
+   ============================================================ */
+
+.clear-all-btn {
+  display: block;
+  width: 100%;
+  padding: 10px;
+  background: #f0f0f0;
+  color: #0f0f0f;
+  font-size: 13px;
+  font-weight: 500;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s;
+  margin-top: 4px;
+}
+
+.clear-all-btn:hover {
+  background: #e4e4e4;
+}
+
+.clear-all-btn:active {
+  background: #d8d8d8;
+}
+
+/* ============================================================
+   Dark Mode
+   ============================================================ */
+
+@media (prefers-color-scheme: dark) {
+  body {
+    background: #0f0f0f;
+    color: #e8e8e8;
+  }
+
+  .stats-row {
+    background: #181818;
+  }
+
+  .stat-value {
+    color: #e8e8e8;
+  }
+
+  .stat-divider {
+    background: #272727;
+  }
+
+  .tab-bar {
+    background: #0f0f0f;
+    border-bottom-color: #272727;
+  }
+
+  .tab:hover {
+    color: #e8e8e8;
+  }
+
+  .toggle-item {
+    border-bottom-color: #272727;
+  }
+
+  .toggle-title {
+    color: #e8e8e8;
+  }
+
+  .toggle-switch {
+    background: #383838;
+  }
+
+  .toggle-switch.active {
+    background: #3ea6ff;
+  }
+
+  .list-item {
+    background: #1a1a1a;
+  }
+
+  .list-item-name {
+    color: #e8e8e8;
+  }
+
+  .clear-all-btn {
+    background: #1a1a1a;
+    color: #e8e8e8;
+    border: 1px solid #272727;
+  }
+
+  .clear-all-btn:hover {
+    background: #242424;
+  }
+
+  .clear-all-btn:active {
+    background: #2a2a2a;
+  }
+}
