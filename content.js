@@ -378,9 +378,9 @@
   // ── Handle Block Click ────────────────────────────────────────────────
 
   async function handleBlockClick(name, id) {
-    await sendMsg({ action: 'blockChannel', channelName: name, channelId: id });
+    const result = await sendMsg({ action: 'blockChannel', channelName: name, channelId: id });
 
-    // Close YouTube menu
+    // Close YouTube menu (if open)
     document.dispatchEvent(
       new KeyboardEvent('keydown', {
         key: 'Escape',
@@ -389,84 +389,91 @@
       })
     );
 
+    if (result && result.reason === 'already_blocked') {
+      showToast('"' + name + '" is already blocked.');
+      return;
+    }
+
     showToast(msg('blockedToast', [name]));
 
     blockedChannelNames.add(name.toLowerCase());
+
+    // Remove the block button if we're on the watch/channel page
+    const blockBtn = document.querySelector('.cleanfeed-channel-block-btn');
+    if (blockBtn) blockBtn.remove();
 
     // Clear processed flags and re-filter
     document.querySelectorAll('[data-cf-checked]').forEach((el) => {
       delete el.dataset.cfChecked;
     });
     filterPage();
+
+    // If on watch page, hide sidebar videos from this channel immediately
+    if (window.location.pathname === '/watch') {
+      document.querySelectorAll('ytd-compact-video-renderer').forEach((card) => {
+        const ch = YT.getChannelName(card);
+        if (ch && ch.toLowerCase() === name.toLowerCase()) {
+          card.classList.add('cleanfeed-hidden');
+        }
+      });
+    }
   }
 
   // ── Channel Page Button ───────────────────────────────────────────────
 
   function injectChannelPageButton() {
+    // Remove existing button on every call (channel may have changed via SPA navigation)
     const existing = document.querySelector('.cleanfeed-channel-block-btn');
+    if (existing) existing.remove();
 
     const isChannel = YT.isChannelPage();
     const isWatch = window.location.pathname === '/watch';
 
-    if (!isChannel && !isWatch) {
-      if (existing) existing.remove();
-      return;
-    }
-    if (existing) return;
+    if (!isChannel && !isWatch) return;
 
-    // Get channel name — different sources for channel page vs watch page
-    let channelName, channelId;
-    if (isChannel) {
+    // Get channel name and container — scoped to the correct area
+    let channelName, channelId, container;
+
+    if (isWatch) {
+      // Watch page: use the MAIN video's owner area (not sidebar)
+      const ownerRenderer = document.querySelector('ytd-watch-metadata ytd-video-owner-renderer, #above-the-fold ytd-video-owner-renderer, ytd-watch-flexy ytd-video-owner-renderer');
+      if (!ownerRenderer) return;
+
+      // Get channel name from within this specific owner renderer
+      const nameEl = ownerRenderer.querySelector('ytd-channel-name yt-formatted-string a') ||
+                     ownerRenderer.querySelector('ytd-channel-name a') ||
+                     ownerRenderer.querySelector('#channel-name a');
+      if (nameEl) {
+        channelName = nameEl.textContent.trim();
+        const href = nameEl.getAttribute('href') || '';
+        channelId = href.startsWith('/@') ? href.substring(1) : href.replace('/channel/', '');
+      }
+
+      // Container: the subscribe button within this owner renderer's parent
+      container = ownerRenderer.querySelector('#subscribe-button') ||
+                  ownerRenderer.parentElement?.querySelector('#subscribe-button') ||
+                  ownerRenderer.closest('#owner')?.querySelector('#subscribe-button');
+    } else {
+      // Channel page
       channelName = YT.getPageChannelName();
       channelId = YT.getPageChannelId();
-    } else {
-      // Watch page: get from video owner renderer
-      // Try multiple selectors — YouTube uses different structures
-      const nameSelectors = [
-        'ytd-video-owner-renderer ytd-channel-name yt-formatted-string a',
-        'ytd-video-owner-renderer ytd-channel-name a',
-        'ytd-video-owner-renderer #channel-name a',
-        'ytd-video-owner-renderer a[href^="/@"]',
-        'ytd-video-owner-renderer a[href^="/channel/"]',
+
+      const channelContainerSelectors = [
+        'ytd-c4-tabbed-header-renderer #subscribe-button',
+        'ytd-c4-tabbed-header-renderer #buttons',
+        '#channel-header #subscribe-button',
+        '#page-header yt-flexible-actions-view-model',
+        '#inner-header-container yt-flexible-actions-view-model',
       ];
-      for (const sel of nameSelectors) {
-        const el = document.querySelector(sel);
-        if (el) {
-          const text = el.textContent.trim();
-          if (text) {
-            channelName = text;
-            const href = el.getAttribute('href') || '';
-            channelId = href.startsWith('/@') ? href.substring(1) : href.replace('/channel/', '');
-            break;
-          }
-        }
+      for (const sel of channelContainerSelectors) {
+        container = document.querySelector(sel);
+        if (container) break;
       }
     }
-    if (!channelName) return;
 
-    // Try multiple container selectors for YouTube's evolving channel page layout
-    const containerSelectors = [
-      '#subscribe-button',
-      'ytd-subscribe-button-renderer',
-      '#channel-header-container .buttons-container',
-      // 2025 layout: header buttons area
-      'ytd-c4-tabbed-header-renderer #buttons',
-      'ytd-c4-tabbed-header-renderer #inner-header-container #buttons',
-      '#inner-header-container yt-flexible-actions-view-model',
-      // Fallback: find the subscribe button directly and use its parent
-      '#page-header yt-button-view-model button[aria-label]',
-      '#channel-header #subscribe-button',
-      '#header-container .buttons-container',
-    ];
+    if (!channelName || !container) return;
 
-    let container = null;
-    for (const sel of containerSelectors) {
-      container = document.querySelector(sel);
-      if (container) break;
-    }
-    if (!container) return;
-
-    // Store name/id as data attributes so click handler always has fresh values
+    // Create button — resolves channel at click time for safety
     const btn = cfEl(
       'button',
       {
@@ -474,8 +481,21 @@
         'data-cf-channel': channelName,
         'data-cf-channel-id': channelId || '',
         onClick: (e) => {
-          const name = e.currentTarget.getAttribute('data-cf-channel');
-          const id = e.currentTarget.getAttribute('data-cf-channel-id');
+          // Re-resolve channel name at click time in case SPA navigated
+          let name = e.currentTarget.getAttribute('data-cf-channel');
+          let id = e.currentTarget.getAttribute('data-cf-channel-id');
+
+          // Double-check by reading from DOM at click time
+          if (isWatch) {
+            const ownerNow = document.querySelector('ytd-watch-metadata ytd-video-owner-renderer, #above-the-fold ytd-video-owner-renderer');
+            const nameNow = ownerNow?.querySelector('ytd-channel-name yt-formatted-string a, ytd-channel-name a');
+            if (nameNow?.textContent?.trim()) {
+              name = nameNow.textContent.trim();
+              const href = nameNow.getAttribute('href') || '';
+              id = href.startsWith('/@') ? href.substring(1) : href.replace('/channel/', '');
+            }
+          }
+
           if (name) {
             handleBlockClick(name, id);
           } else {
@@ -486,9 +506,11 @@
       [cfLogo(), cfEl('span', { textContent: msg('blockThisChannel') })]
     );
 
-    // Insert after the container (or after its parent if container is a button element)
+    // Insert after the subscribe button
     const insertTarget = container.tagName === 'BUTTON' ? container.parentNode : container;
-    insertTarget.parentNode.insertBefore(btn, insertTarget.nextSibling);
+    if (insertTarget && insertTarget.parentNode) {
+      insertTarget.parentNode.insertBefore(btn, insertTarget.nextSibling);
+    }
   }
 
   // ── Search Intercept (Interest Boundaries) ────────────────────────────
