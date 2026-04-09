@@ -421,13 +421,25 @@
       channelId = YT.getPageChannelId();
     } else {
       // Watch page: get from video owner renderer
-      const ownerLink = document.querySelector('ytd-video-owner-renderer a[href^="/@"]');
-      channelName = ownerLink?.textContent?.trim();
-      channelId = ownerLink?.getAttribute('href')?.replace('/', '');
-      // If empty, try the channel name text element
-      if (!channelName) {
-        const ownerName = document.querySelector('ytd-video-owner-renderer ytd-channel-name #text a, ytd-video-owner-renderer .ytd-channel-name a');
-        channelName = ownerName?.textContent?.trim();
+      // Try multiple selectors — YouTube uses different structures
+      const nameSelectors = [
+        'ytd-video-owner-renderer ytd-channel-name yt-formatted-string a',
+        'ytd-video-owner-renderer ytd-channel-name a',
+        'ytd-video-owner-renderer #channel-name a',
+        'ytd-video-owner-renderer a[href^="/@"]',
+        'ytd-video-owner-renderer a[href^="/channel/"]',
+      ];
+      for (const sel of nameSelectors) {
+        const el = document.querySelector(sel);
+        if (el) {
+          const text = el.textContent.trim();
+          if (text) {
+            channelName = text;
+            const href = el.getAttribute('href') || '';
+            channelId = href.startsWith('/@') ? href.substring(1) : href.replace('/channel/', '');
+            break;
+          }
+        }
       }
     }
     if (!channelName) return;
