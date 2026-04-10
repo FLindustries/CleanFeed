@@ -192,16 +192,28 @@
   function filterPage() {
     if (currentSettings.hideShorts) {
       document.body.classList.add('cleanfeed-hide-shorts');
-      // JS-based Shorts hiding for search results — catches shelves that CSS
-      // :has() may miss when YouTube wraps Shorts in generic ytd-shelf-renderer
-      document.querySelectorAll('ytd-shelf-renderer').forEach((shelf) => {
+      // JS-based Shorts hiding for search results
+      // Hide ANY element that is a Shorts container
+      const shortsSelectors = [
+        'ytd-shelf-renderer',
+        'ytd-reel-shelf-renderer',
+        'ytd-rich-shelf-renderer[is-shorts]',
+        'ytd-rich-section-renderer'
+      ];
+      document.querySelectorAll(shortsSelectors.join(',')).forEach((shelf) => {
         if (shelf.classList.contains('cleanfeed-hidden')) return;
+        // Check if this is a Shorts section by title or attribute
         const titleEl = shelf.querySelector(
           '#title, #title-text, .title, h2 yt-formatted-string, ' +
-          'span#title-text, #title-container yt-formatted-string'
+          'span#title-text, #title-container yt-formatted-string, ' +
+          'span.style-scope.ytd-rich-shelf-renderer'
         );
         const titleText = (titleEl?.textContent || '').trim().toLowerCase();
-        if (titleText === 'shorts' || titleText.startsWith('shorts')) {
+        const hasShorts = shelf.hasAttribute('is-shorts') ||
+                          shelf.querySelector('ytd-reel-item-renderer') ||
+                          titleText === 'shorts' ||
+                          titleText.startsWith('shorts');
+        if (hasShorts) {
           shelf.classList.add('cleanfeed-hidden');
         }
       });
@@ -1017,10 +1029,7 @@
         }
       }
 
-      // Auto-dismiss banner after 30s (give user time to see it)
-      setTimeout(() => {
-        if (promptEl && promptEl.parentNode) promptEl.remove();
-      }, 30000);
+      // No auto-dismiss — stays until user clicks a button
     } else {
       const toastLogo = document.createElement('span');
       toastLogo.className = 'cleanfeed-cf-logo';
@@ -1033,10 +1042,7 @@
       promptEl.classList.add('cleanfeed-curiosity-toast');
       document.body.appendChild(promptEl);
 
-      // Auto-dismiss toast after 8s
-      setTimeout(() => {
-        if (promptEl && promptEl.parentNode) dismissToast(promptEl);
-      }, 8000);
+      // No auto-dismiss — stays until user clicks a button
     }
   }
 
