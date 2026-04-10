@@ -190,6 +190,8 @@
   // ── Filtering ─────────────────────────────────────────────────────────
 
   function filterPage() {
+    isFiltering = true;
+    try {
     if (currentSettings.hideShorts) {
       document.body.classList.add('cleanfeed-hide-shorts');
       // JS-based Shorts hiding for search results
@@ -234,6 +236,10 @@
     }
     hideBlockedContent();
     updateBlockedChannelPreHideStyles();
+    } finally {
+      // Allow observer to fire again after a delay
+      setTimeout(() => { isFiltering = false; }, 500);
+    }
   }
 
   function hideBlockedContent() {
@@ -529,14 +535,18 @@
 
   // ── MutationObserver ──────────────────────────────────────────────────
 
+  let isFiltering = false;
+
   function startObserver() {
     if (observer) observer.disconnect();
 
     observer = new MutationObserver(() => {
+      // Don't re-trigger while we're already filtering (prevents loop)
+      if (isFiltering) return;
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
         filterPage();
-      }, 200);
+      }, 300);
     });
 
     observer.observe(document.body, {
