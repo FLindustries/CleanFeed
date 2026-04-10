@@ -99,6 +99,9 @@
         blockedChannelHandles.add(handle);
       }
     }
+
+    // Update CSS pre-hide rules immediately so blocked content never flashes
+    updateBlockedChannelPreHideStyles();
   }
 
   // ── SPA Navigation ────────────────────────────────────────────────────
@@ -141,15 +144,72 @@
     filterPage();
   }
 
+  // ── CSS Pre-Hiding for Blocked Channels ────────────────────────────
+
+  let preHideStyleEl = null;
+
+  function updateBlockedChannelPreHideStyles() {
+    // Build CSS rules that hide video cards by @handle href BEFORE JS runs.
+    // Uses style.sheet.insertRule() to bypass YouTube's Trusted Types CSP.
+    if (!preHideStyleEl) {
+      preHideStyleEl = document.createElement('style');
+      preHideStyleEl.id = 'cleanfeed-prehide';
+      document.head.appendChild(preHideStyleEl);
+    }
+
+    const sheet = preHideStyleEl.sheet;
+    if (!sheet) return;
+
+    // Clear existing rules
+    while (sheet.cssRules.length > 0) {
+      sheet.deleteRule(0);
+    }
+
+    // Insert a rule for each blocked handle
+    for (const handle of blockedChannelHandles) {
+      // handle is stored as "@something" (lowercase)
+      const href = '/' + handle; // becomes "/@something"
+      const rule =
+        'ytd-video-renderer:has(a[href="' + href + '"]), ' +
+        'ytd-rich-item-renderer:has(a[href="' + href + '"]), ' +
+        'ytd-grid-video-renderer:has(a[href="' + href + '"]), ' +
+        'ytd-compact-video-renderer:has(a[href="' + href + '"]), ' +
+        'ytd-reel-item-renderer:has(a[href="' + href + '"]), ' +
+        'ytd-shelf-renderer:has(a[href="' + href + '"]), ' +
+        'ytd-reel-shelf-renderer:has(a[href="' + href + '"]), ' +
+        'ytd-playlist-renderer:has(a[href="' + href + '"]) ' +
+        '{ display: none !important; }';
+      try {
+        sheet.insertRule(rule, sheet.cssRules.length);
+      } catch (e) {
+        // Some selectors might fail in older browsers — skip silently
+      }
+    }
+  }
+
   // ── Filtering ─────────────────────────────────────────────────────────
 
   function filterPage() {
     if (currentSettings.hideShorts) {
       document.body.classList.add('cleanfeed-hide-shorts');
+      // JS-based Shorts hiding for search results — catches shelves that CSS
+      // :has() may miss when YouTube wraps Shorts in generic ytd-shelf-renderer
+      document.querySelectorAll('ytd-shelf-renderer').forEach((shelf) => {
+        if (shelf.classList.contains('cleanfeed-hidden')) return;
+        const titleEl = shelf.querySelector(
+          '#title, #title-text, .title, h2 yt-formatted-string, ' +
+          'span#title-text, #title-container yt-formatted-string'
+        );
+        const titleText = (titleEl?.textContent || '').trim().toLowerCase();
+        if (titleText === 'shorts' || titleText.startsWith('shorts')) {
+          shelf.classList.add('cleanfeed-hidden');
+        }
+      });
     } else {
       document.body.classList.remove('cleanfeed-hide-shorts');
     }
     hideBlockedContent();
+    updateBlockedChannelPreHideStyles();
   }
 
   function hideBlockedContent() {
@@ -674,10 +734,34 @@
         '#channel-header #subscribe-button',
         '#page-header yt-flexible-actions-view-model',
         '#inner-header-container yt-flexible-actions-view-model',
+        // Additional layouts (Bonsai Empire-style pages, redesigned channel headers)
+        '#page-header #flexible-item-buttons',
+        '#page-header .page-header-view-model-wiz__page-header-flexible-actions',
+        'ytd-c4-tabbed-header-renderer #inner-header-container #buttons',
+        '#channel-header-container #subscribe-button',
+        '#page-header-container yt-subscribe-button-view-model',
       ];
       for (const sel of channelContainerSelectors) {
         container = document.querySelector(sel);
         if (container) break;
+      }
+
+      // Fallback: if no subscribe/buttons container found, insert after channel name
+      if (!container) {
+        const channelNameSelectors = [
+          'ytd-c4-tabbed-header-renderer #channel-name',
+          '#page-header yt-dynamic-text-view-model',
+          '#inner-header-container yt-formatted-string#text',
+          '#channel-header ytd-channel-name',
+          '#page-header .page-header-view-model-wiz__page-header-title',
+        ];
+        for (const sel of channelNameSelectors) {
+          const nameEl = document.querySelector(sel);
+          if (nameEl) {
+            container = nameEl;
+            break;
+          }
+        }
       }
     }
 

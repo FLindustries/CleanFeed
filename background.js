@@ -27,6 +27,16 @@ async function checkProStatus() {
 chrome.runtime.onInstalled.addListener(async () => {
   await Storage.init();
   chrome.alarms.create('smartDecay', { periodInMinutes: 24 * 60 });
+
+  // Reset curiosity prompt counter on install/update — clears stale counts
+  // from testing sessions so free users see the teaser again
+  try {
+    const onboarding = await Storage.getOnboarding();
+    onboarding.interestPromptCount = 0;
+    await chrome.storage.local.set({ onboarding });
+  } catch (e) {
+    console.warn('CleanFeed: failed to reset interest prompt count:', e);
+  }
 });
 
 // --- Alarms ---
@@ -202,6 +212,14 @@ async function handleMessage(request) {
 
     case 'incrementStat': {
       await Storage.incrementStat(request.stat, request.amount || 1);
+      return { success: true };
+    }
+
+    // --- Interest Prompt Reset ---
+    case 'resetInterestPromptCount': {
+      const onboarding = await Storage.getOnboarding();
+      onboarding.interestPromptCount = 0;
+      await chrome.storage.local.set({ onboarding });
       return { success: true };
     }
 

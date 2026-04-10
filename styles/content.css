@@ -37,7 +37,10 @@ body.cleanfeed-hide-shorts ytd-reel-item-renderer,
 body.cleanfeed-hide-shorts [is-shorts],
 body.cleanfeed-hide-shorts ytd-guide-entry-renderer:has(a[title="Shorts"]),
 body.cleanfeed-hide-shorts ytd-mini-guide-entry-renderer:has(a[title="Shorts"]),
-body.cleanfeed-hide-shorts yt-chip-cloud-chip-renderer:has([title="Shorts"]) {
+body.cleanfeed-hide-shorts yt-chip-cloud-chip-renderer:has([title="Shorts"]),
+body.cleanfeed-hide-shorts ytd-shelf-renderer:has(.ytd-reel-shelf-renderer),
+body.cleanfeed-hide-shorts ytd-shelf-renderer:has([is-shorts]),
+body.cleanfeed-hide-shorts ytd-shelf-renderer:has(ytd-reel-item-renderer) {
   display: none !important;
 }
 
