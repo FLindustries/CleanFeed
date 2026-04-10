@@ -190,26 +190,13 @@
   // ── Filtering ─────────────────────────────────────────────────────────
 
   function filterPage() {
-    // Pause observer to prevent re-triggering while we modify the DOM
-    if (observer) observer.disconnect();
-
     if (currentSettings.hideShorts) {
       document.body.classList.add('cleanfeed-hide-shorts');
-      // Mark Shorts sections with a CSS class for hiding (minimal JS)
-      document.querySelectorAll('ytd-item-section-renderer').forEach((sec) => {
-        if (sec.classList.contains('cleanfeed-shorts-section')) return;
-        if (sec.querySelector('grid-shelf-view-model')) {
-          sec.classList.add('cleanfeed-shorts-section');
-        }
-      });
     } else {
       document.body.classList.remove('cleanfeed-hide-shorts');
     }
     hideBlockedContent();
     updateBlockedChannelPreHideStyles();
-
-    // Re-enable observer after a short delay so our DOM changes don't re-trigger it
-    setTimeout(() => startObserver(), 200);
   }
 
   function hideBlockedContent() {
@@ -505,18 +492,14 @@
 
   // ── MutationObserver ──────────────────────────────────────────────────
 
-  let isFiltering = false;
-
   function startObserver() {
     if (observer) observer.disconnect();
 
     observer = new MutationObserver(() => {
-      // Don't re-trigger while we're already filtering (prevents loop)
-      if (isFiltering) return;
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
         filterPage();
-      }, 150);
+      }, 200);
     });
 
     observer.observe(document.body, {
@@ -918,10 +901,10 @@
     const jnText = msg('curiosityJustNow');
     justNowBtn.textContent = (jnText === 'curiosityJustNow') ? 'Just now' : jnText;
     justNowBtn.addEventListener('click', () => {
-      if (proStatus) {
-        activeJustNowQueries.add(query);
-        removePrompt();
-      } else {
+      console.log('CleanFeed: Just now clicked, isPro:', proStatus);
+      activeJustNowQueries.add(query);
+      removePrompt();
+      if (!proStatus) {
         sendMsg({ action: 'openPaymentPage' });
       }
     });
@@ -931,16 +914,16 @@
     const tdText = msg('curiosityToday');
     todayBtn.textContent = (tdText === 'curiosityToday') ? 'Today' : tdText;
     todayBtn.addEventListener('click', () => {
-      if (proStatus) {
-        const endOfDay = new Date();
-        endOfDay.setHours(23, 59, 59, 999);
-        sendMsg({
-          action: 'addInterest',
-          query,
-          expiresAt: endOfDay.getTime(),
-        });
-        removePrompt();
-      } else {
+      console.log('CleanFeed: Today clicked, isPro:', proStatus);
+      const endOfDay = new Date();
+      endOfDay.setHours(23, 59, 59, 999);
+      sendMsg({
+        action: 'addInterest',
+        query,
+        expiresAt: endOfDay.getTime(),
+      });
+      removePrompt();
+      if (!proStatus) {
         sendMsg({ action: 'openPaymentPage' });
       }
     });
@@ -950,10 +933,10 @@
     const alText = msg('curiosityAlways');
     alwaysBtn.textContent = (alText === 'curiosityAlways') ? 'Always' : alText;
     alwaysBtn.addEventListener('click', () => {
-      if (proStatus) {
-        sendMsg({ action: 'addInterest', query });
-        removePrompt();
-      } else {
+      console.log('CleanFeed: Always clicked, isPro:', proStatus);
+      sendMsg({ action: 'addInterest', query });
+      removePrompt();
+      if (!proStatus) {
         sendMsg({ action: 'openPaymentPage' });
       }
     });

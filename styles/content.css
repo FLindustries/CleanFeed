@@ -79,18 +79,6 @@ body.cleanfeed-hide-shorts ytd-reel-item-renderer {
   display: none !important;
 }
 
-/* JS-marked Shorts sections in search results */
-body.cleanfeed-hide-shorts .cleanfeed-shorts-section {
-  visibility: hidden !important;
-  height: 0 !important;
-  min-height: 0 !important;
-  max-height: 0 !important;
-  overflow: hidden !important;
-  padding: 0 !important;
-  margin: 0 !important;
-  opacity: 0 !important;
-  pointer-events: none !important;
-}
 
 /* --- Toast Notification --- */
 .cleanfeed-toast {
