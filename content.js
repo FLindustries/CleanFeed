@@ -757,7 +757,7 @@
       const query = params.get('search_query');
       if (query) {
         // Small delay to let the search page render
-        setTimeout(() => triggerInterestCheck(query), 800);
+        setTimeout(() => triggerInterestCheck(query), 2000);
       }
     }
   }
@@ -913,14 +913,20 @@
         anchor.parentNode.insertBefore(promptEl, anchor);
         console.log('CleanFeed: inline banner inserted before', anchor.tagName);
       } else {
-        // Fallback: add as toast at bottom of screen
-        console.log('CleanFeed: no anchor found, using toast fallback');
-        const fallbackLogo = document.createElement('span');
-        fallbackLogo.className = 'cleanfeed-cf-logo';
-        fallbackLogo.textContent = 'CF';
-        promptEl = buildToastEl([fallbackLogo, titleEl, subtitleEl, buttons]);
-        promptEl.classList.add('cleanfeed-curiosity-toast');
-        document.body.appendChild(promptEl);
+        // Fallback: insert at top of page content or use fixed position
+        console.log('CleanFeed: no anchor found, inserting at top of page-manager');
+        const pageManager = document.querySelector('ytd-page-manager, #content, #page-manager');
+        if (pageManager) {
+          pageManager.prepend(promptEl);
+        } else {
+          // Last resort: fixed position toast
+          promptEl.style.position = 'fixed';
+          promptEl.style.top = '70px';
+          promptEl.style.left = '50%';
+          promptEl.style.transform = 'translateX(-50%)';
+          promptEl.style.zIndex = '99999';
+          document.body.appendChild(promptEl);
+        }
       }
 
       // Auto-dismiss banner after 30s (give user time to see it)
