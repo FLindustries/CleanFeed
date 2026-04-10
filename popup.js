@@ -14,6 +14,18 @@ async function loadState() {
   state = await chrome.runtime.sendMessage({ action: 'getFullState' });
 }
 
+// Send refilter message directly to the active YouTube tab so it
+// un-hides / re-hides content immediately (backup for storage.onChanged).
+function notifyContentScript() {
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    if (tabs[0] && tabs[0].id) {
+      // No tabs permission needed: sendMessage will silently fail if the
+      // tab doesn't have our content script (non-YouTube pages).
+      chrome.tabs.sendMessage(tabs[0].id, { action: 'refilterPage' }).catch(() => {});
+    }
+  });
+}
+
 function applyI18n() {
   document.querySelectorAll('[data-i18n]').forEach(el => {
     const msg = chrome.i18n.getMessage(el.dataset.i18n);
@@ -179,6 +191,7 @@ function renderBlocked() {
       removeBtn.textContent = '\u00d7';
       removeBtn.addEventListener('click', async () => {
         await chrome.runtime.sendMessage({ action: 'removeBlockedChannel', index: i });
+        notifyContentScript();
         await loadState();
         renderAll();
       });
@@ -194,6 +207,7 @@ function renderBlocked() {
     clearBtn.addEventListener('click', async () => {
       if (confirm(chrome.i18n.getMessage('clearAllConfirm'))) {
         await chrome.runtime.sendMessage({ action: 'clearAllBlockedChannels' });
+        notifyContentScript();
         await loadState();
         renderAll();
       }
@@ -272,6 +286,7 @@ function renderBlocked() {
       removeBtn.textContent = '\u00d7';
       removeBtn.addEventListener('click', async () => {
         await chrome.runtime.sendMessage({ action: 'removeKeyword', index: i });
+        notifyContentScript();
         await loadState();
         renderAll();
       });

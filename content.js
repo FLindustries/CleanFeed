@@ -9,6 +9,7 @@
   // ── State ──────────────────────────────────────────────────────────────
 
   let blockedChannelNames = new Set();
+  let blockedChannelHandles = new Set(); // @handles for href-based matching
   let blockedKeywords = [];
   let whitelistedChannels = [];
   let currentSettings = {};
@@ -69,6 +70,15 @@
 
     document.addEventListener('yt-navigate-finish', onNavigate);
     chrome.storage.onChanged.addListener(onStorageChanged);
+
+    // Listen for direct refilter messages from popup/background
+    chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+      if (request && request.action === 'refilterPage') {
+        console.log('CleanFeed: received refilterPage message');
+        onStorageChanged({}, 'local');
+        sendResponse({ success: true });
+      }
+    });
   }
 
   function applyState(state) {
@@ -79,9 +89,15 @@
     whitelistedChannels = state.whitelistedChannels || [];
 
     blockedChannelNames = new Set();
+    blockedChannelHandles = new Set();
     const channels = state.blockedChannels || [];
     for (const ch of channels) {
       if (ch.name) blockedChannelNames.add(ch.name.toLowerCase());
+      // Store @handle for href-based matching (id may be "@handle" or just "handle")
+      if (ch.id) {
+        const handle = ch.id.startsWith('@') ? ch.id.toLowerCase() : '@' + ch.id.toLowerCase();
+        blockedChannelHandles.add(handle);
+      }
     }
   }
 
@@ -103,7 +119,8 @@
 
   // ── Storage Change Listener ───────────────────────────────────────────
 
-  async function onStorageChanged() {
+  async function onStorageChanged(changes, areaName) {
+    console.log('CleanFeed: onStorageChanged fired', areaName, Object.keys(changes || {}));
     const state = await sendMsg({ action: 'getFullState' });
     applyState(state);
 
@@ -271,6 +288,32 @@
           }
         }
       });
+    }
+
+    // Aggressive final sweep: match blocked channels by @handle in href values.
+    // This catches channels regardless of how the display name is rendered
+    // (different casing, unicode, localized names, etc.)
+    if (blockedChannelHandles.size > 0) {
+      const handleLinks = document.querySelectorAll('a[href^="/@"]');
+      for (const link of handleLinks) {
+        const href = (link.getAttribute('href') || '').toLowerCase();
+        // Extract the handle portion: /@ followed by the handle (ignore trailing path)
+        const handleMatch = href.match(/^\/(@[^\/\?]+)/);
+        if (!handleMatch) continue;
+        const handle = handleMatch[1];
+        if (!blockedChannelHandles.has(handle)) continue;
+
+        // Walk up to the nearest renderer-level container and hide it
+        const container = link.closest(
+          'ytd-video-renderer, ytd-grid-video-renderer, ytd-rich-item-renderer, ' +
+          'ytd-compact-video-renderer, ytd-reel-item-renderer, ytd-channel-renderer, ' +
+          'ytd-shelf-renderer, ytd-reel-shelf-renderer, ytd-horizontal-card-list-renderer, ' +
+          'ytd-playlist-renderer'
+        );
+        if (container && !container.classList.contains('cleanfeed-hidden')) {
+          container.classList.add('cleanfeed-hidden');
+        }
+      }
     }
 
     // If we're on a blocked channel's page, hide ALL their content
@@ -757,63 +800,72 @@
     if (existingBanner) existingBanner.remove();
     if (existingToast) dismissToast(existingToast);
 
-    const titleEl = cfEl('div', {}, [
-      cfEl('strong', { textContent: msg('newSearch', [query]) }),
-    ]);
-    const subtitleEl = cfEl('span', {
-      textContent: msg('rememberInterest'),
+    // Build all elements with raw createElement + textContent to avoid any
+    // Trusted Types CSP violations (cfEl chains can fail silently on YouTube).
+
+    // -- Logo --
+    const logo = document.createElement('span');
+    logo.className = 'cleanfeed-cf-logo';
+    logo.textContent = 'CF';
+
+    // -- Title: "New search: [query]" --
+    const titleStrong = document.createElement('strong');
+    titleStrong.textContent = msg('newSearch', [query]);
+    const titleEl = document.createElement('div');
+    titleEl.appendChild(titleStrong);
+
+    // -- Subtitle --
+    const subtitleEl = document.createElement('span');
+    subtitleEl.textContent = msg('rememberInterest');
+
+    // -- Buttons --
+    const justNowBtn = document.createElement('button');
+    justNowBtn.className = 'cleanfeed-btn cleanfeed-btn-secondary';
+    justNowBtn.textContent = msg('curiosityJustNow');
+    justNowBtn.addEventListener('click', () => {
+      if (proStatus) {
+        activeJustNowQueries.add(query);
+        removePrompt();
+      } else {
+        sendMsg({ action: 'openPaymentPage' });
+      }
     });
 
-    const justNowBtn = cfEl('button', {
-      className: 'cleanfeed-btn cleanfeed-btn-secondary',
-      textContent: msg('curiosityJustNow'),
-      onClick: () => {
-        if (proStatus) {
-          activeJustNowQueries.add(query);
-          removePrompt();
-        } else {
-          sendMsg({ action: 'openPaymentPage' });
-        }
-      },
+    const todayBtn = document.createElement('button');
+    todayBtn.className = 'cleanfeed-btn cleanfeed-btn-secondary';
+    todayBtn.textContent = msg('curiosityToday');
+    todayBtn.addEventListener('click', () => {
+      if (proStatus) {
+        const endOfDay = new Date();
+        endOfDay.setHours(23, 59, 59, 999);
+        sendMsg({
+          action: 'addInterest',
+          query,
+          expiresAt: endOfDay.getTime(),
+        });
+        removePrompt();
+      } else {
+        sendMsg({ action: 'openPaymentPage' });
+      }
     });
 
-    const todayBtn = cfEl('button', {
-      className: 'cleanfeed-btn cleanfeed-btn-secondary',
-      textContent: msg('curiosityToday'),
-      onClick: () => {
-        if (proStatus) {
-          const endOfDay = new Date();
-          endOfDay.setHours(23, 59, 59, 999);
-          sendMsg({
-            action: 'addInterest',
-            query,
-            expiresAt: endOfDay.getTime(),
-          });
-          removePrompt();
-        } else {
-          sendMsg({ action: 'openPaymentPage' });
-        }
-      },
+    const alwaysBtn = document.createElement('button');
+    alwaysBtn.className = 'cleanfeed-btn cleanfeed-btn-primary';
+    alwaysBtn.textContent = msg('curiosityAlways');
+    alwaysBtn.addEventListener('click', () => {
+      if (proStatus) {
+        sendMsg({ action: 'addInterest', query });
+        removePrompt();
+      } else {
+        sendMsg({ action: 'openPaymentPage' });
+      }
     });
 
-    const alwaysBtn = cfEl('button', {
-      className: 'cleanfeed-btn cleanfeed-btn-primary',
-      textContent: msg('curiosityAlways'),
-      onClick: () => {
-        if (proStatus) {
-          sendMsg({ action: 'addInterest', query });
-          removePrompt();
-        } else {
-          sendMsg({ action: 'openPaymentPage' });
-        }
-      },
-    });
-
-    const buttons = cfEl('div', { className: 'cleanfeed-toast-buttons' }, [
-      justNowBtn,
-      todayBtn,
-      alwaysBtn,
-    ]);
+    const buttons = document.createElement('div');
+    buttons.className = 'cleanfeed-toast-buttons';
+    buttons.appendChild(justNowBtn);
+    buttons.appendChild(todayBtn);
+    buttons.appendChild(alwaysBtn);
 
     let promptEl;
 
@@ -828,18 +880,20 @@
     }
 
     if (useInlineBanner) {
-      const content = cfEl('div', { className: 'cleanfeed-inline-banner-content' }, [
-        cfLogo(),
-        cfEl('div', { className: 'cleanfeed-inline-banner-text' }, [
-          titleEl,
-          subtitleEl,
-        ]),
-      ]);
+      const bannerText = document.createElement('div');
+      bannerText.className = 'cleanfeed-inline-banner-text';
+      bannerText.appendChild(titleEl);
+      bannerText.appendChild(subtitleEl);
 
-      promptEl = cfEl('div', { className: 'cleanfeed-inline-banner' }, [
-        content,
-        buttons,
-      ]);
+      const content = document.createElement('div');
+      content.className = 'cleanfeed-inline-banner-content';
+      content.appendChild(logo);
+      content.appendChild(bannerText);
+
+      promptEl = document.createElement('div');
+      promptEl.className = 'cleanfeed-inline-banner';
+      promptEl.appendChild(content);
+      promptEl.appendChild(buttons);
 
       // Try multiple anchor points for the inline banner
       const anchorSelectors = [
@@ -861,7 +915,10 @@
       } else {
         // Fallback: add as toast at bottom of screen
         console.log('CleanFeed: no anchor found, using toast fallback');
-        promptEl = buildToastEl([cfLogo(), titleEl, subtitleEl, buttons]);
+        const fallbackLogo = document.createElement('span');
+        fallbackLogo.className = 'cleanfeed-cf-logo';
+        fallbackLogo.textContent = 'CF';
+        promptEl = buildToastEl([fallbackLogo, titleEl, subtitleEl, buttons]);
         promptEl.classList.add('cleanfeed-curiosity-toast');
         document.body.appendChild(promptEl);
       }
@@ -871,14 +928,14 @@
         if (promptEl && promptEl.parentNode) promptEl.remove();
       }, 30000);
     } else {
-      promptEl = buildToastEl([
-        cfLogo(),
-        cfEl('div', { className: 'cleanfeed-toast-text' }, [
-          titleEl,
-          subtitleEl,
-        ]),
-        buttons,
-      ]);
+      const toastLogo = document.createElement('span');
+      toastLogo.className = 'cleanfeed-cf-logo';
+      toastLogo.textContent = 'CF';
+      const toastText = document.createElement('div');
+      toastText.className = 'cleanfeed-toast-text';
+      toastText.appendChild(titleEl);
+      toastText.appendChild(subtitleEl);
+      promptEl = buildToastEl([toastLogo, toastText, buttons]);
       promptEl.classList.add('cleanfeed-curiosity-toast');
       document.body.appendChild(promptEl);
 
