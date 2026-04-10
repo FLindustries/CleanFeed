@@ -208,7 +208,7 @@
     updateBlockedChannelPreHideStyles();
     } finally {
       // Allow observer to fire again after a delay
-      setTimeout(() => { isFiltering = false; }, 500);
+      isFiltering = false;
     }
   }
 
@@ -516,7 +516,7 @@
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
         filterPage();
-      }, 300);
+      }, 150);
     });
 
     observer.observe(document.body, {
@@ -849,7 +849,7 @@
       const query = params.get('search_query');
       if (query) {
         // Small delay to let the search page render
-        setTimeout(() => triggerInterestCheck(query), 2000);
+        setTimeout(() => triggerInterestCheck(query), 800);
       }
     }
   }
