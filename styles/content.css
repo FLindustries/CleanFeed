@@ -28,7 +28,18 @@ html[dark] {
 }
 
 /* --- Hidden by CleanFeed --- */
-.cleanfeed-hidden { display: none !important; }
+.cleanfeed-hidden {
+  visibility: hidden !important;
+  height: 0 !important;
+  min-height: 0 !important;
+  max-height: 0 !important;
+  overflow: hidden !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: none !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
 
 /* --- Shorts Killer (CSS-based) --- */
 body.cleanfeed-hide-shorts ytd-reel-shelf-renderer,
