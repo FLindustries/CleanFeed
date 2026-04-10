@@ -190,11 +190,12 @@
   // ── Filtering ─────────────────────────────────────────────────────────
 
   function filterPage() {
-    isFiltering = true;
-    try {
+    // Pause observer to prevent re-triggering while we modify the DOM
+    if (observer) observer.disconnect();
+
     if (currentSettings.hideShorts) {
       document.body.classList.add('cleanfeed-hide-shorts');
-      // Mark Shorts sections with a CSS class for hiding (minimal JS, no cleanfeed-hidden)
+      // Mark Shorts sections with a CSS class for hiding (minimal JS)
       document.querySelectorAll('ytd-item-section-renderer').forEach((sec) => {
         if (sec.classList.contains('cleanfeed-shorts-section')) return;
         if (sec.querySelector('grid-shelf-view-model')) {
@@ -206,10 +207,9 @@
     }
     hideBlockedContent();
     updateBlockedChannelPreHideStyles();
-    } finally {
-      // Allow observer to fire again after a delay
-      isFiltering = false;
-    }
+
+    // Re-enable observer after a short delay so our DOM changes don't re-trigger it
+    setTimeout(() => startObserver(), 200);
   }
 
   function hideBlockedContent() {
