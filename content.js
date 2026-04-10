@@ -193,28 +193,25 @@
     if (currentSettings.hideShorts) {
       document.body.classList.add('cleanfeed-hide-shorts');
       // JS-based Shorts hiding for search results
-      // Hide ANY element that is a Shorts container
-      const shortsSelectors = [
-        'ytd-shelf-renderer',
-        'ytd-reel-shelf-renderer',
-        'ytd-rich-shelf-renderer[is-shorts]',
-        'ytd-rich-section-renderer'
-      ];
-      document.querySelectorAll(shortsSelectors.join(',')).forEach((shelf) => {
-        if (shelf.classList.contains('cleanfeed-hidden')) return;
-        // Check if this is a Shorts section by title or attribute
-        const titleEl = shelf.querySelector(
-          '#title, #title-text, .title, h2 yt-formatted-string, ' +
-          'span#title-text, #title-container yt-formatted-string, ' +
-          'span.style-scope.ytd-rich-shelf-renderer'
+      // YouTube 2025 uses grid-shelf-view-model inside ytd-item-section-renderer
+      // with a yt-section-header-view-model containing "Shorts" title
+      document.querySelectorAll(
+        'ytd-item-section-renderer, ytd-shelf-renderer, ytd-reel-shelf-renderer, ' +
+        'ytd-rich-shelf-renderer[is-shorts], ytd-rich-section-renderer'
+      ).forEach((section) => {
+        if (section.classList.contains('cleanfeed-hidden')) return;
+        // Check for Shorts by multiple indicators
+        const titleEl = section.querySelector(
+          '#title, #title-text, h2, .ytShelfHeaderLayoutTitle, ' +
+          'yt-formatted-string, span.yt-core-attributed-string'
         );
         const titleText = (titleEl?.textContent || '').trim().toLowerCase();
-        const hasShorts = shelf.hasAttribute('is-shorts') ||
-                          shelf.querySelector('ytd-reel-item-renderer') ||
+        const hasShorts = section.hasAttribute('is-shorts') ||
+                          section.querySelector('ytd-reel-item-renderer, grid-shelf-view-model') ||
                           titleText === 'shorts' ||
                           titleText.startsWith('shorts');
         if (hasShorts) {
-          shelf.classList.add('cleanfeed-hidden');
+          section.classList.add('cleanfeed-hidden');
         }
       });
     } else {
