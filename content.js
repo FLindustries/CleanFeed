@@ -841,22 +841,35 @@
         buttons,
       ]);
 
-      const anchor = document.querySelector(
-        'ytd-section-list-renderer, ytd-search'
-      );
+      // Try multiple anchor points for the inline banner
+      const anchorSelectors = [
+        'ytd-section-list-renderer',
+        'ytd-search',
+        'ytd-item-section-renderer',
+        '#contents.ytd-search',
+        '#container.ytd-search'
+      ];
+      let anchor = null;
+      for (const sel of anchorSelectors) {
+        anchor = document.querySelector(sel);
+        if (anchor) break;
+      }
+
       if (anchor && anchor.parentNode) {
         anchor.parentNode.insertBefore(promptEl, anchor);
+        console.log('CleanFeed: inline banner inserted before', anchor.tagName);
       } else {
-        // Fallback: add as toast
-        promptEl = buildToastEl([titleEl, subtitleEl, buttons]);
+        // Fallback: add as toast at bottom of screen
+        console.log('CleanFeed: no anchor found, using toast fallback');
+        promptEl = buildToastEl([cfLogo(), titleEl, subtitleEl, buttons]);
         promptEl.classList.add('cleanfeed-curiosity-toast');
         document.body.appendChild(promptEl);
       }
 
-      // Auto-dismiss banner after 10s
+      // Auto-dismiss banner after 30s (give user time to see it)
       setTimeout(() => {
         if (promptEl && promptEl.parentNode) promptEl.remove();
-      }, 10000);
+      }, 30000);
     } else {
       promptEl = buildToastEl([
         cfLogo(),
