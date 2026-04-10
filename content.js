@@ -563,8 +563,8 @@
   // ── Inject "Block Channel" into Video Menu ────────────────────────────
 
   function injectBlockOption(popup) {
-    // Don't inject twice
-    if (popup.querySelector('.cleanfeed-menu-item')) return;
+    // Remove old CleanFeed items (YouTube reuses popups, so the old item has stale channel data)
+    popup.querySelectorAll('.cleanfeed-menu-item, .cleanfeed-menu-separator').forEach(el => el.remove());
 
     const listbox = YT.getMenuListbox(popup);
     if (!listbox) return;
