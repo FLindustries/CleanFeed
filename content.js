@@ -194,43 +194,8 @@
     try {
     if (currentSettings.hideShorts) {
       document.body.classList.add('cleanfeed-hide-shorts');
-      // JS-based Shorts hiding for search results
-      // YouTube 2025 uses grid-shelf-view-model inside ytd-item-section-renderer
-      // with a yt-section-header-view-model containing "Shorts" title
-      document.querySelectorAll(
-        'ytd-item-section-renderer, ytd-shelf-renderer, ytd-reel-shelf-renderer, ' +
-        'ytd-rich-shelf-renderer[is-shorts], ytd-rich-section-renderer'
-      ).forEach((section) => {
-        if (section.classList.contains('cleanfeed-hidden')) return;
-        // Check for Shorts by multiple indicators
-        const titleEl = section.querySelector(
-          '#title, #title-text, h2, .ytShelfHeaderLayoutTitle, ' +
-          'yt-formatted-string, span.yt-core-attributed-string'
-        );
-        const titleText = (titleEl?.textContent || '').trim().toLowerCase();
-        const hasShorts = section.hasAttribute('is-shorts') ||
-                          section.querySelector('ytd-reel-item-renderer, grid-shelf-view-model') ||
-                          titleText === 'shorts' ||
-                          titleText.startsWith('shorts');
-        if (hasShorts) {
-          section.classList.add('cleanfeed-hidden');
-        }
-      });
-      // Also hide individual video cards that are Shorts (have SHORTS badge or overlay)
-      document.querySelectorAll('ytd-video-renderer').forEach((video) => {
-        if (video.classList.contains('cleanfeed-hidden')) return;
-        // Check for Shorts badge/overlay
-        const shortsBadge = video.querySelector(
-          '[overlay-style="SHORTS"], .ytd-thumbnail-overlay-time-status-renderer[overlay-style="SHORTS"], ' +
-          'span.ytd-thumbnail-overlay-time-status-renderer'
-        );
-        if (shortsBadge) {
-          const badgeText = shortsBadge.textContent?.trim().toUpperCase();
-          if (badgeText === 'SHORTS' || shortsBadge.getAttribute('overlay-style') === 'SHORTS') {
-            video.classList.add('cleanfeed-hidden');
-          }
-        }
-      });
+      // All Shorts hiding is done via CSS only — no JS DOM manipulation
+      // This prevents YouTube from detecting "missing content" and reloading
     } else {
       document.body.classList.remove('cleanfeed-hide-shorts');
     }

@@ -41,17 +41,40 @@ html[dark] {
   pointer-events: none !important;
 }
 
-/* --- Shorts Killer (CSS-based) --- */
+/* --- Shorts Killer (CSS-based, no JS) --- */
+/* Uses visibility+height instead of display:none to prevent YouTube reload loop */
+
+/* Homepage + Subscription Shorts sections */
 body.cleanfeed-hide-shorts ytd-reel-shelf-renderer,
 body.cleanfeed-hide-shorts ytd-rich-shelf-renderer[is-shorts],
-body.cleanfeed-hide-shorts ytd-reel-item-renderer,
 body.cleanfeed-hide-shorts [is-shorts],
-body.cleanfeed-hide-shorts ytd-guide-entry-renderer:has(a[title="Shorts"]),
-body.cleanfeed-hide-shorts ytd-mini-guide-entry-renderer:has(a[title="Shorts"]),
-body.cleanfeed-hide-shorts yt-chip-cloud-chip-renderer:has([title="Shorts"]),
+/* Search results: Shorts sections (YouTube 2025 layout) */
+body.cleanfeed-hide-shorts ytd-item-section-renderer:has(grid-shelf-view-model),
 body.cleanfeed-hide-shorts ytd-shelf-renderer:has(.ytd-reel-shelf-renderer),
 body.cleanfeed-hide-shorts ytd-shelf-renderer:has([is-shorts]),
-body.cleanfeed-hide-shorts ytd-shelf-renderer:has(ytd-reel-item-renderer) {
+body.cleanfeed-hide-shorts ytd-shelf-renderer:has(ytd-reel-item-renderer),
+/* Individual Shorts videos in search results (badge overlay) */
+body.cleanfeed-hide-shorts ytd-video-renderer:has([overlay-style="SHORTS"]),
+body.cleanfeed-hide-shorts ytd-video-renderer:has(ytd-thumbnail-overlay-time-status-renderer[overlay-style="SHORTS"]),
+/* Sidebar Shorts link */
+body.cleanfeed-hide-shorts ytd-guide-entry-renderer:has(a[title="Shorts"]),
+body.cleanfeed-hide-shorts ytd-mini-guide-entry-renderer:has(a[title="Shorts"]),
+/* Shorts chip filter */
+body.cleanfeed-hide-shorts yt-chip-cloud-chip-renderer:has([title="Shorts"]) {
+  visibility: hidden !important;
+  height: 0 !important;
+  min-height: 0 !important;
+  max-height: 0 !important;
+  overflow: hidden !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: none !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* Individual reel items (Shorts thumbnails) — keep display:none since they're inside hidden containers */
+body.cleanfeed-hide-shorts ytd-reel-item-renderer {
   display: none !important;
 }
 
