@@ -727,10 +727,11 @@
     // Per-session limit: free users get 3 prompts per page-load session
     if (sessionPromptCount >= 3 && !isPro) return;
 
-    // Check if this query already matches a saved interest — if so, skip
+    // Check if this EXACT query was already saved as an interest — if so, skip
+    // (We use exact match, not fuzzy, to avoid false positives)
     const matchCheck = await sendMsg({ action: 'checkInterestMatch', query });
-    if (matchCheck && matchCheck.matches) {
-      console.log('CleanFeed: query matches existing interest, skipping prompt');
+    if (matchCheck && matchCheck.exactMatch) {
+      console.log('CleanFeed: query exactly matches existing interest, skipping prompt');
       return;
     }
 

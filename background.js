@@ -144,9 +144,17 @@ async function handleMessage(request) {
     }
 
     case 'checkInterestMatch': {
-      // Check if a query matches an existing saved interest without incrementing count
-      const matches = await Storage.matchesExistingInterest(request.query);
-      return { matches: !!matches };
+      // Check if this EXACT query is already saved as an interest (not fuzzy match)
+      const interests = await Storage.getInterests();
+      const queryLower = request.query.toLowerCase().trim();
+      let exactMatch = false;
+      for (const [key, interest] of Object.entries(interests)) {
+        if (interest.query && interest.query.toLowerCase().trim() === queryLower) {
+          exactMatch = true;
+          break;
+        }
+      }
+      return { exactMatch };
     }
 
     case 'addInterest': {
