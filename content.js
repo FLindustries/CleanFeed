@@ -214,6 +214,21 @@
           section.classList.add('cleanfeed-hidden');
         }
       });
+      // Also hide individual video cards that are Shorts (have SHORTS badge or overlay)
+      document.querySelectorAll('ytd-video-renderer').forEach((video) => {
+        if (video.classList.contains('cleanfeed-hidden')) return;
+        // Check for Shorts badge/overlay
+        const shortsBadge = video.querySelector(
+          '[overlay-style="SHORTS"], .ytd-thumbnail-overlay-time-status-renderer[overlay-style="SHORTS"], ' +
+          'span.ytd-thumbnail-overlay-time-status-renderer'
+        );
+        if (shortsBadge) {
+          const badgeText = shortsBadge.textContent?.trim().toUpperCase();
+          if (badgeText === 'SHORTS' || shortsBadge.getAttribute('overlay-style') === 'SHORTS') {
+            video.classList.add('cleanfeed-hidden');
+          }
+        }
+      });
     } else {
       document.body.classList.remove('cleanfeed-hide-shorts');
     }
