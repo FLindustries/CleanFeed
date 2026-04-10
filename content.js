@@ -563,8 +563,20 @@
   // ── Inject "Block Channel" into Video Menu ────────────────────────────
 
   function injectBlockOption(popup) {
-    // Remove old CleanFeed items (YouTube reuses popups, so the old item has stale channel data)
-    popup.querySelectorAll('.cleanfeed-menu-item, .cleanfeed-menu-separator').forEach(el => el.remove());
+    // Get channel info from tracked video card FIRST
+    if (!lastClickedVideoCard) return;
+
+    const channelName = YT.getChannelName(lastClickedVideoCard);
+    const channelId = YT.getChannelId(lastClickedVideoCard);
+
+    // Check if the existing menu item already has the correct channel
+    const existingItem = popup.querySelector('.cleanfeed-menu-item');
+    if (existingItem && existingItem.dataset.cfChannel === channelName) return;
+
+    // Remove old items if channel changed
+    if (existingItem) {
+      popup.querySelectorAll('.cleanfeed-menu-item, .cleanfeed-menu-separator').forEach(el => el.remove());
+    }
 
     const listbox = YT.getMenuListbox(popup);
     if (!listbox) return;
@@ -572,16 +584,7 @@
     const items = YT.getMenuItems(listbox);
     if (!items || items.length === 0) return;
 
-    // Verify it's a video menu: if it has at least 2 items it's likely a
-    // video context menu (homepage, search, or sidebar).  We already guard
-    // against wrong menus via lastClickedVideoCard + channelName below.
     if (items.length < 2) return;
-
-    // Get channel info from tracked video card
-    if (!lastClickedVideoCard) return;
-
-    const channelName = YT.getChannelName(lastClickedVideoCard);
-    const channelId = YT.getChannelId(lastClickedVideoCard);
     if (!channelName) return;
 
     // Create separator + block item
@@ -593,6 +596,7 @@
         className: 'cleanfeed-menu-item',
         role: 'menuitem',
         tabindex: '0',
+        'data-cf-channel': channelName,
         onClick: () => handleBlockClick(channelName, channelId),
       },
       [
