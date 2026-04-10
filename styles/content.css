@@ -50,6 +50,7 @@ body.cleanfeed-hide-shorts ytd-rich-shelf-renderer[is-shorts],
 body.cleanfeed-hide-shorts [is-shorts],
 /* Search results: Shorts sections (YouTube 2025 layout) */
 body.cleanfeed-hide-shorts ytd-item-section-renderer:has(grid-shelf-view-model),
+body.cleanfeed-hide-shorts grid-shelf-view-model,
 body.cleanfeed-hide-shorts ytd-shelf-renderer:has(.ytd-reel-shelf-renderer),
 body.cleanfeed-hide-shorts ytd-shelf-renderer:has([is-shorts]),
 body.cleanfeed-hide-shorts ytd-shelf-renderer:has(ytd-reel-item-renderer),
@@ -73,9 +74,22 @@ body.cleanfeed-hide-shorts yt-chip-cloud-chip-renderer:has([title="Shorts"]) {
   pointer-events: none !important;
 }
 
-/* Individual reel items (Shorts thumbnails) — keep display:none since they're inside hidden containers */
+/* Individual reel items (Shorts thumbnails) */
 body.cleanfeed-hide-shorts ytd-reel-item-renderer {
   display: none !important;
+}
+
+/* JS-marked Shorts sections in search results */
+body.cleanfeed-hide-shorts .cleanfeed-shorts-section {
+  visibility: hidden !important;
+  height: 0 !important;
+  min-height: 0 !important;
+  max-height: 0 !important;
+  overflow: hidden !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
 }
 
 /* --- Toast Notification --- */

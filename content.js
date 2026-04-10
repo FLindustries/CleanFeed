@@ -194,8 +194,13 @@
     try {
     if (currentSettings.hideShorts) {
       document.body.classList.add('cleanfeed-hide-shorts');
-      // All Shorts hiding is done via CSS only — no JS DOM manipulation
-      // This prevents YouTube from detecting "missing content" and reloading
+      // Mark Shorts sections with a CSS class for hiding (minimal JS, no cleanfeed-hidden)
+      document.querySelectorAll('ytd-item-section-renderer').forEach((sec) => {
+        if (sec.classList.contains('cleanfeed-shorts-section')) return;
+        if (sec.querySelector('grid-shelf-view-model')) {
+          sec.classList.add('cleanfeed-shorts-section');
+        }
+      });
     } else {
       document.body.classList.remove('cleanfeed-hide-shorts');
     }
@@ -897,18 +902,21 @@
 
     // -- Title: "New search: [query]" --
     const titleStrong = document.createElement('strong');
-    titleStrong.textContent = msg('newSearch', [query]);
+    const newSearchText = msg('newSearch', [query]);
+    titleStrong.textContent = (newSearchText === 'newSearch') ? 'New search: "' + query + '"' : newSearchText;
     const titleEl = document.createElement('div');
     titleEl.appendChild(titleStrong);
 
     // -- Subtitle --
     const subtitleEl = document.createElement('span');
-    subtitleEl.textContent = msg('rememberInterest');
+    const rememberText = msg('rememberInterest');
+    subtitleEl.textContent = (rememberText === 'rememberInterest') ? 'How long do you want to see this content?' : rememberText;
 
     // -- Buttons --
     const justNowBtn = document.createElement('button');
     justNowBtn.className = 'cleanfeed-btn cleanfeed-btn-secondary';
-    justNowBtn.textContent = msg('curiosityJustNow');
+    const jnText = msg('curiosityJustNow');
+    justNowBtn.textContent = (jnText === 'curiosityJustNow') ? 'Just now' : jnText;
     justNowBtn.addEventListener('click', () => {
       if (proStatus) {
         activeJustNowQueries.add(query);
@@ -920,7 +928,8 @@
 
     const todayBtn = document.createElement('button');
     todayBtn.className = 'cleanfeed-btn cleanfeed-btn-secondary';
-    todayBtn.textContent = msg('curiosityToday');
+    const tdText = msg('curiosityToday');
+    todayBtn.textContent = (tdText === 'curiosityToday') ? 'Today' : tdText;
     todayBtn.addEventListener('click', () => {
       if (proStatus) {
         const endOfDay = new Date();
@@ -938,7 +947,8 @@
 
     const alwaysBtn = document.createElement('button');
     alwaysBtn.className = 'cleanfeed-btn cleanfeed-btn-primary';
-    alwaysBtn.textContent = msg('curiosityAlways');
+    const alText = msg('curiosityAlways');
+    alwaysBtn.textContent = (alText === 'curiosityAlways') ? 'Always' : alText;
     alwaysBtn.addEventListener('click', () => {
       if (proStatus) {
         sendMsg({ action: 'addInterest', query });
