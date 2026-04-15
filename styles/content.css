@@ -48,9 +48,12 @@ html[dark] {
 body.cleanfeed-hide-shorts ytd-reel-shelf-renderer,
 body.cleanfeed-hide-shorts ytd-rich-shelf-renderer[is-shorts],
 body.cleanfeed-hide-shorts [is-shorts],
-/* Search results: Shorts sections (YouTube 2025 layout) */
-body.cleanfeed-hide-shorts ytd-item-section-renderer:has(grid-shelf-view-model),
+/* Search results: Shorts sections (YouTube 2025/2026 layout) */
+/* Hide the Shorts grid shelf directly (heading + thumbnails). */
+/* Do NOT hide ytd-item-section-renderer:has(grid-shelf-view-model) — that */
+/* hides the ENTIRE results section since regular results share the parent. */
 body.cleanfeed-hide-shorts grid-shelf-view-model,
+body.cleanfeed-hide-shorts ytd-item-section-renderer:has(ytd-reel-item-renderer),
 body.cleanfeed-hide-shorts ytd-shelf-renderer:has(.ytd-reel-shelf-renderer),
 body.cleanfeed-hide-shorts ytd-shelf-renderer:has([is-shorts]),
 body.cleanfeed-hide-shorts ytd-shelf-renderer:has(ytd-reel-item-renderer),
@@ -171,6 +174,26 @@ body.cleanfeed-hide-shorts ytd-reel-item-renderer {
 .cleanfeed-inline-banner-text strong { color: var(--cf-text); }
 .cleanfeed-inline-banner-text span { color: var(--cf-text-secondary); font-size: 13px; }
 
+/* --- Curiosity Prompt (fixed at top, immune to YouTube DOM swaps) --- */
+#cleanfeed-curiosity-prompt,
+#cleanfeed-suggested-prompt {
+  position: fixed;
+  top: 56px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 99999;
+  width: 90%;
+  max-width: 1096px;
+  margin: 0;
+  box-sizing: border-box;
+  animation: cf-banner-in 0.3s ease forwards;
+}
+
+@keyframes cf-banner-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(-10px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
 /* --- CF Logo --- */
 .cleanfeed-cf-logo {
   width: 20px; height: 20px;
@@ -192,6 +215,7 @@ body.cleanfeed-hide-shorts ytd-reel-item-renderer {
 }
 
 .cleanfeed-menu-item:hover { background: var(--cf-bg-secondary); }
+.cleanfeed-menu-item-topic { color: var(--cf-accent); }
 .cleanfeed-menu-separator { height: 1px; background: var(--cf-border); margin: 4px 0; }
 
 /* --- Channel Page Block Button --- */

@@ -6,12 +6,15 @@ const Storage = {
     blockedChannels: [],
     blockedKeywords: [],
     whitelistedChannels: [],
+    disabledSynonyms: [],    // individual synonyms turned off within categories
+    customSynonyms: {},      // user-added synonyms per category: {gaming: ["resident evil"]}
     interests: {},
     hiddenVideos: [],
     settings: {
       hideShorts: false,
       enableSmartDecay: true,
-      enableInterestBoundaries: true
+      enableInterestBoundaries: true,
+      language: 'auto'       // 'auto', 'en', 'it'
     },
     stats: {
       channelsBlocked: 0,
@@ -102,6 +105,53 @@ const Storage = {
       keywords.splice(index, 1);
       await chrome.storage.local.set({ blockedKeywords: keywords });
     }
+  },
+
+  // --- Disabled Synonyms ---
+
+  async getDisabledSynonyms() {
+    const { disabledSynonyms } = await chrome.storage.local.get('disabledSynonyms');
+    return disabledSynonyms || [];
+  },
+
+  async toggleSynonym(synonym) {
+    const list = await this.getDisabledSynonyms();
+    const lower = synonym.toLowerCase();
+    const idx = list.indexOf(lower);
+    if (idx >= 0) {
+      list.splice(idx, 1); // re-enable
+    } else {
+      list.push(lower); // disable
+    }
+    await chrome.storage.local.set({ disabledSynonyms: list });
+    return { enabled: idx >= 0 };
+  },
+
+  // --- Custom Synonyms ---
+
+  async getCustomSynonyms() {
+    const { customSynonyms } = await chrome.storage.local.get('customSynonyms');
+    return customSynonyms || {};
+  },
+
+  async addCustomSynonym(category, synonym) {
+    const customs = await this.getCustomSynonyms();
+    if (!customs[category]) customs[category] = [];
+    const lower = synonym.toLowerCase().trim();
+    if (!lower) return { success: false };
+    if (customs[category].includes(lower)) return { success: false, reason: 'already_exists' };
+    customs[category].push(lower);
+    await chrome.storage.local.set({ customSynonyms: customs });
+    return { success: true };
+  },
+
+  async removeCustomSynonym(category, synonym) {
+    const customs = await this.getCustomSynonyms();
+    if (!customs[category]) return;
+    const lower = synonym.toLowerCase();
+    customs[category] = customs[category].filter(s => s !== lower);
+    if (customs[category].length === 0) delete customs[category];
+    await chrome.storage.local.set({ customSynonyms: customs });
   },
 
   // --- Whitelisted Channels (Subscription Exception) ---

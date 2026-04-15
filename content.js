@@ -12,6 +12,7 @@
   let blockedChannelHandles = new Set(); // @handles for href-based matching
   let blockedKeywords = [];
   let whitelistedChannels = [];
+  let savedInterestQueries = []; // active interests from storage (Today/Always)
   let currentSettings = {};
   let isPro = false;
   let debounceTimer = null;
@@ -22,10 +23,46 @@
   const loggedVideos = new Set(); // dedup: track title+channel combos already logged
   let sessionPromptCount = 0; // per-session curiosity prompt count (resets each page load)
   let lastPromptedQuery = ''; // avoid re-prompting for the same query on SPA re-renders
+  let lastKnownSearchQuery = ''; // track URL search query for SPA change detection
+  let pendingCuriosityCheck = null; // pending waitForSearchResults timeout
 
   // ── Helpers ────────────────────────────────────────────────────────────
 
+  // Custom i18n: load language override from settings
+  let _contentMessages = null;
+
+  async function loadContentLanguage() {
+    try {
+      const { settings } = await chrome.storage.local.get('settings');
+      const lang = settings?.language || 'auto';
+      if (lang === 'auto') { _contentMessages = null; return; }
+      const url = chrome.runtime.getURL('_locales/' + lang + '/messages.json');
+      const resp = await fetch(url);
+      _contentMessages = await resp.json();
+    } catch (e) {
+      _contentMessages = null;
+    }
+  }
+
   function msg(key, subs) {
+    // Try custom language first
+    if (_contentMessages && _contentMessages[key]) {
+      let text = _contentMessages[key].message;
+      if (subs && Array.isArray(subs)) {
+        subs.forEach((sub, i) => {
+          text = text.replace('$' + (i + 1), sub);
+          const placeholders = _contentMessages[key].placeholders;
+          if (placeholders) {
+            for (const [name, ph] of Object.entries(placeholders)) {
+              if (ph.content === '$' + (i + 1)) {
+                text = text.replace('$' + name.toUpperCase() + '$', sub);
+              }
+            }
+          }
+        });
+      }
+      return text;
+    }
     try {
       return chrome.i18n?.getMessage(key, subs) || key;
     } catch (e) {
@@ -58,17 +95,35 @@
   // ── Init ───────────────────────────────────────────────────────────────
 
   async function init() {
+    // Load custom language for content script messages
+    await loadContentLanguage();
+
+    // Pre-apply Shorts hiding immediately (before waiting for full state)
+    // to eliminate any flash of Shorts content during load.
+    try {
+      const { settings } = await chrome.storage.local.get('settings');
+      if (settings && settings.hideShorts) {
+        document.body.classList.add('cleanfeed-hide-shorts');
+      }
+    } catch (e) { /* storage not ready yet — init will handle it */ }
+
     const state = await sendMsg({ action: 'getFullState' });
     applyState(state);
 
     filterPage();
     startObserver();
     trackMenuClicks();
+    interceptSuggestedClicks();
     watchForMenuPopup();
     interceptSearch();
     injectChannelPageButton();
 
     document.addEventListener('yt-navigate-finish', onNavigate);
+    document.addEventListener('yt-page-data-updated', () => {
+      filterPage();
+      checkSearchQueryChanged();
+    });
+    startSearchQueryWatcher();
     chrome.storage.onChanged.addListener(onStorageChanged);
 
     // Listen for direct refilter messages from popup/background
@@ -88,19 +143,30 @@
     blockedKeywords = state.blockedKeywords || [];
     whitelistedChannels = state.whitelistedChannels || [];
 
+    // Load saved interests (Today/Always) so hideBlockedContent can exempt them.
+    // Filter out expired "Today" interests.
+    savedInterestQueries = [];
+    const interests = state.interests || {};
+    const now = Date.now();
+    for (const [key, interest] of Object.entries(interests)) {
+      if (interest.expiresAt && interest.expiresAt < now) continue; // expired
+      if (interest.query) savedInterestQueries.push(interest.query.toLowerCase());
+    }
+
     blockedChannelNames = new Set();
     blockedChannelHandles = new Set();
     const channels = state.blockedChannels || [];
     for (const ch of channels) {
       if (ch.name) blockedChannelNames.add(ch.name.toLowerCase());
-      // Store @handle for href-based matching (id may be "@handle" or just "handle")
       if (ch.id) {
         const handle = ch.id.startsWith('@') ? ch.id.toLowerCase() : '@' + ch.id.toLowerCase();
         blockedChannelHandles.add(handle);
       }
     }
 
-    // Update CSS pre-hide rules immediately so blocked content never flashes
+    // Update synonym filters (disabled synonyms + custom synonyms)
+    cfSetSynonymFilters(state.disabledSynonyms, state.customSynonyms);
+
     updateBlockedChannelPreHideStyles();
   }
 
@@ -110,9 +176,12 @@
     const state = await sendMsg({ action: 'getFullState' });
     applyState(state);
 
-    // Clear curiosity window queries when leaving search results
+    // Clear curiosity window when leaving search results
     if (!window.location.pathname.startsWith('/results')) {
       activeJustNowQueries.clear();
+      lastKnownSearchQuery = '';
+      lastPromptedQuery = '';
+      removeCuriosityPrompt();
     }
 
     filterPage();
@@ -168,16 +237,19 @@
     // Insert a rule for each blocked handle
     for (const handle of blockedChannelHandles) {
       // handle is stored as "@something" (lowercase)
+      // Use case-insensitive attribute selector (i flag) because YouTube
+      // may use different casing (/@Trolden vs /@trolden)
       const href = '/' + handle; // becomes "/@something"
       const rule =
-        'ytd-video-renderer:has(a[href="' + href + '"]), ' +
-        'ytd-rich-item-renderer:has(a[href="' + href + '"]), ' +
-        'ytd-grid-video-renderer:has(a[href="' + href + '"]), ' +
-        'ytd-compact-video-renderer:has(a[href="' + href + '"]), ' +
-        'ytd-reel-item-renderer:has(a[href="' + href + '"]), ' +
-        'ytd-shelf-renderer:has(a[href="' + href + '"]), ' +
-        'ytd-reel-shelf-renderer:has(a[href="' + href + '"]), ' +
-        'ytd-playlist-renderer:has(a[href="' + href + '"]) ' +
+        'ytd-video-renderer:has(a[href="' + href + '" i]), ' +
+        'ytd-rich-item-renderer:has(a[href="' + href + '" i]), ' +
+        'ytd-grid-video-renderer:has(a[href="' + href + '" i]), ' +
+        'ytd-compact-video-renderer:has(a[href="' + href + '" i]), ' +
+        'ytd-reel-item-renderer:has(a[href="' + href + '" i]), ' +
+        'ytd-shelf-renderer:has(a[href="' + href + '" i]), ' +
+        'ytd-reel-shelf-renderer:has(a[href="' + href + '" i]), ' +
+        'ytd-playlist-renderer:has(a[href="' + href + '" i]), ' +
+        'yt-lockup-view-model:has(a[href="' + href + '" i]) ' +
         '{ display: none !important; }';
       try {
         sheet.insertRule(rule, sheet.cssRules.length);
@@ -192,14 +264,31 @@
   function filterPage() {
     if (currentSettings.hideShorts) {
       document.body.classList.add('cleanfeed-hide-shorts');
+      // Hide "Shorts" filter chip — YouTube removed the [title] attribute so
+      // CSS :has([title="Shorts"]) no longer works; must match by text content.
+      document.querySelectorAll('yt-chip-cloud-chip-renderer').forEach(chip => {
+        if (chip.textContent.trim() === 'Shorts') {
+          chip.style.display = 'none';
+        }
+      });
     } else {
       document.body.classList.remove('cleanfeed-hide-shorts');
+      // Restore chip if setting turned off
+      document.querySelectorAll('yt-chip-cloud-chip-renderer').forEach(chip => {
+        if (chip.textContent.trim() === 'Shorts' && chip.style.display === 'none') {
+          chip.style.display = '';
+        }
+      });
     }
     hideBlockedContent();
-    updateBlockedChannelPreHideStyles();
+    // Note: updateBlockedChannelPreHideStyles() runs in applyState() when
+    // blocked lists change — no need to rebuild CSS rules on every filter pass.
   }
 
   function hideBlockedContent() {
+    // Nothing to filter — skip all DOM queries
+    if (blockedChannelNames.size === 0 && blockedChannelHandles.size === 0 && blockedKeywords.length === 0) return;
+
     const cards = document.querySelectorAll(YT.VIDEO_CARDS);
     let newCards = 0;
 
@@ -218,20 +307,27 @@
         continue;
       }
 
-      // Keyword blocking
+      // Keyword blocking (with synonym expansion — "crypto" also blocks "bitcoin" etc.)
       const title = YT.getVideoTitle(card) || '';
       const desc = YT.getVideoDescription(card);
 
       for (const kw of blockedKeywords) {
-        const keyword = kw.keyword;
-        if (matchesKeyword(title, keyword) || matchesKeyword(desc, keyword)) {
-          // Check whitelist
-          if (isWhitelisted(channelName, keyword)) continue;
-          // Check curiosity window
-          if (matchesJustNow(title, desc)) continue;
+        const expandedTerms = getExpandedKeywords(kw.keyword);
+        let matched = false;
+        for (const term of expandedTerms) {
+          if (matchesKeyword(title, term) || matchesKeyword(desc, term)) {
+            matched = true;
+            break;
+          }
+        }
+        if (matched) {
+          if (isWhitelisted(channelName, kw.keyword)) continue;
+          // Interests (Just now / Today / Always) only exempt on search results page.
+          // On homepage, watch page sidebar, etc., keyword blocking always takes priority.
+          if (window.location.pathname === '/results' && matchesSavedInterest(title, desc)) continue;
 
           card.classList.add('cleanfeed-hidden');
-          logHidden(card, 'keyword', keyword);
+          logHidden(card, 'keyword', kw.keyword);
           break;
         }
       }
@@ -256,6 +352,11 @@
         logHidden(card, 'channel', channelName);
       }
     }
+
+    // Skip heavy channel/shelf/handle passes when no channels are blocked
+    if (blockedChannelNames.size === 0 && blockedChannelHandles.size === 0) {
+      // Still need to check channel page and subscription exceptions below
+    } else {
 
     // Hide blocked channels EVERYWHERE — search results, Shorts, shelves, etc.
     // Channel result cards in search — aggressive matching across all text/link content
@@ -363,6 +464,8 @@
       }
     }
 
+    } // end: blockedChannelNames/Handles gate
+
     // If we're on a blocked channel's page, hide ALL their content
     if (YT.isChannelPage()) {
       const pageChannel = YT.getPageChannelName();
@@ -389,12 +492,96 @@
       }
     }
 
-    // Subscription Exception: check if keyword blocks hit subscribed channels
-    checkSubscriptionExceptions();
+    // Extra sweep for sidebar: YouTube 2025-2026 sidebar uses yt-lockup-metadata-view-model
+    // which is NOT in VIDEO_CARDS. Find ALL #video-title in the sidebar and process them.
+    if (window.location.pathname === '/watch') {
+      const sidebarTitles = document.querySelectorAll(
+        '#secondary #video-title, ytd-watch-next-secondary-results-renderer #video-title'
+      );
+      for (const titleEl of sidebarTitles) {
+        // Walk up to find the outermost individual video container.
+        // Stop at list boundaries (#items, #contents, #secondary).
+        let container = titleEl;
+        let bestContainer = titleEl.parentElement;
+        for (let i = 0; i < 8 && container; i++) {
+          container = container.parentElement;
+          if (!container) break;
+          if (container.id === 'items' || container.id === 'contents' ||
+              container.id === 'secondary' ||
+              container.tagName === 'YTD-WATCH-NEXT-SECONDARY-RESULTS-RENDERER') break;
+          bestContainer = container;
+        }
+        container = bestContainer;
+
+        if (!container || container.dataset.cfChecked) continue;
+        if (container.classList.contains('cleanfeed-hidden')) continue;
+        container.dataset.cfChecked = 'sidebar';
+
+        const title = titleEl.textContent?.trim() || '';
+
+        // Channel blocking: try multiple strategies
+        // Strategy 1: standard getChannelName (works if links exist)
+        const channelName = YT.getChannelName(container);
+        const channelLower = channelName ? channelName.toLowerCase() : '';
+        if (channelLower && blockedChannelNames.has(channelLower)) {
+          container.classList.add('cleanfeed-hidden');
+          continue;
+        }
+
+        // Strategy 2: check handle links
+        const channelLink = container.querySelector('a[href^="/@"]');
+        const channelHref = (channelLink?.getAttribute('href') || '').toLowerCase();
+        const handleMatch = channelHref.match(/^\/(@[^\/\?]+)/);
+        const handle = handleMatch ? handleMatch[1] : '';
+        if (handle && blockedChannelHandles.has(handle)) {
+          container.classList.add('cleanfeed-hidden');
+          continue;
+        }
+
+        // Strategy 3: brute force — check if ALL text in the container contains
+        // any blocked channel name. The sidebar renders channel names as plain text
+        // without links, so we search the full text content.
+        const allText = container.textContent.toLowerCase();
+        let channelBlocked = false;
+        for (const blocked of blockedChannelNames) {
+          if (allText.includes(blocked)) {
+            container.classList.add('cleanfeed-hidden');
+            channelBlocked = true;
+            break;
+          }
+        }
+        if (channelBlocked) continue;
+
+        // Keyword blocking
+        for (const kw of blockedKeywords) {
+          const expandedTerms = getExpandedKeywords(kw.keyword);
+          for (const term of expandedTerms) {
+            if (matchesKeyword(title, term)) {
+              container.classList.add('cleanfeed-hidden');
+              break;
+            }
+          }
+          if (container.classList.contains('cleanfeed-hidden')) break;
+        }
+      }
+    }
+
+    // Subscription Exception: throttled — runs at most once every 3 seconds
+    // to avoid scanning the entire sidebar + all hidden cards on every filter pass.
+    scheduleSubscriptionCheck();
   }
 
   // Track which keyword-blocked channels we've already prompted about
   const promptedSubscriptionExceptions = new Set();
+  let subCheckTimer = null;
+
+  function scheduleSubscriptionCheck() {
+    if (subCheckTimer) return; // already scheduled
+    subCheckTimer = setTimeout(() => {
+      subCheckTimer = null;
+      checkSubscriptionExceptions();
+    }, 3000);
+  }
 
   function checkSubscriptionExceptions() {
     if (!isPro && blockedKeywords.length === 0) return;
@@ -438,7 +625,8 @@
         // This card was hidden by this keyword and the channel is subscribed
         const title = YT.getVideoTitle(card) || '';
         const desc = YT.getVideoDescription(card);
-        if (matchesKeyword(title, keyword) || matchesKeyword(desc, keyword)) {
+        const expandedTerms = getExpandedKeywords(keyword);
+        if (expandedTerms.some(term => matchesKeyword(title, term) || matchesKeyword(desc, term))) {
           if (!affectedChannels.some(c => c.name.toLowerCase() === channelName.toLowerCase())) {
             affectedChannels.push({
               name: channelName,
@@ -467,12 +655,63 @@
     );
   }
 
-  function matchesJustNow(title, desc) {
+  // ── Topic Detection Helpers ────────────────────────────────────────
+
+  function getBlockedCategoryForTitle(title) {
+    if (!title) return null;
+    for (const kw of blockedKeywords) {
+      const expandedTerms = getExpandedKeywords(kw.keyword);
+      for (const term of expandedTerms) {
+        if (matchesKeyword(title, term)) return expandedTerms[0];
+      }
+    }
+    return null;
+  }
+
+  const STOP_WORDS = new Set([
+    'the','a','an','is','are','was','were','in','on','at','to','for','of','and','or',
+    'but','not','this','that','with','from','by','how','what','why','when','who','my',
+    'your','you','he','she','it','we','they','me','him','her','us','them','do','does',
+    'did','will','would','can','could','should','may','might','has','have','had','no',
+    'yes','all','just','about','been','being','get','got','new','old','first','last',
+    'very','most','some','any','one','two','its','than','then','so','if','up','out',
+    'into','more','come','like','best','full','video','official','music',
+    'il','la','le','lo','un','una','di','da','del','della','che','per','con','non',
+    'sono','una','questo','questa','come','cosa','tutto','tutti','anche','solo','dopo',
+    'prima','ogni','suo','sua','suoi','fare','fatto','essere','stato','stati'
+  ]);
+
+  function detectTopicFromTitle(title) {
+    if (!title) return null;
+    // Match against ALL synonym categories (not just blocked ones).
+    // If no category matches, return null — don't guess random words.
+    // Previously the fallback picked the first word >= 4 chars, which
+    // caused nonsense topics like "code" (from "Code Geass") or "survival".
+    for (const [category, synonyms] of Object.entries(KEYWORD_SYNONYMS)) {
+      if (matchesKeyword(title, category)) return category;
+      for (const synonym of synonyms) {
+        if (matchesKeyword(title, synonym)) return category;
+      }
+    }
+    return null;
+  }
+
+  function matchesSavedInterest(title, desc) {
+    // Check in-memory "Just now" queries
     for (const q of activeJustNowQueries) {
+      if (matchesKeyword(title, q) || matchesKeyword(desc, q)) return true;
+    }
+    // Check stored interests (Today / Always) — these persist across reloads
+    for (const q of savedInterestQueries) {
       if (matchesKeyword(title, q) || matchesKeyword(desc, q)) return true;
     }
     return false;
   }
+
+  // Batched logging — queue entries and flush once per second instead of
+  // sending 2 IPC messages per hidden video (40+ calls during a busy filter pass).
+  let logQueue = [];
+  let logFlushTimer = null;
 
   function logHidden(card, type, value) {
     const title = YT.getVideoTitle(card) || '';
@@ -481,28 +720,52 @@
     if (loggedVideos.has(dedupKey)) return;
     loggedVideos.add(dedupKey);
 
-    sendMsg({ action: 'incrementStat', stat: 'videosHidden', amount: 1 });
-    sendMsg({
-      action: 'logHiddenVideo',
-      title,
-      channel,
-      reason: type + ':' + value,
-    });
+    logQueue.push({ title, channel, reason: type + ':' + value });
+
+    if (!logFlushTimer) {
+      logFlushTimer = setTimeout(flushLogQueue, 1000);
+    }
   }
 
+  function flushLogQueue() {
+    logFlushTimer = null;
+    if (logQueue.length === 0) return;
+    const batch = logQueue.splice(0);
+    // Single stat increment for the whole batch
+    sendMsg({ action: 'incrementStat', stat: 'videosHidden', amount: batch.length });
+    // Send individual logs (fire-and-forget, but now spaced from filtering)
+    for (const entry of batch) {
+      sendMsg({ action: 'logHiddenVideo', title: entry.title, channel: entry.channel, reason: entry.reason });
+    }
+  }
+
+  // ── Find Card from Active Menu ─────────────────────────────────────
+
+  // When a three-dot menu is open, find which video it belongs to by
+  // checking all ytd-menu-renderer elements for one with active/open state,
+  // then walking up to find video info (title + channel).
   // ── MutationObserver ──────────────────────────────────────────────────
 
   function startObserver() {
     if (observer) observer.disconnect();
 
     observer = new MutationObserver(() => {
+      // Immediately re-apply CSS-only toggles (zero cost, prevents flicker).
+      // This runs on every mutation but classList.add is a no-op if already set.
+      if (currentSettings.hideShorts) {
+        document.body.classList.add('cleanfeed-hide-shorts');
+      }
+
       if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => {
-        filterPage();
-      }, 200);
+      debounceTimer = setTimeout(() => filterPage(), 300);
     });
 
-    observer.observe(document.body, {
+    // Scope to the content area — avoids firing on navbar, sidebar, popups, etc.
+    const target = document.querySelector('ytd-page-manager') ||
+                   document.querySelector('#content') ||
+                   document.body;
+
+    observer.observe(target, {
       childList: true,
       subtree: true,
     });
@@ -529,6 +792,153 @@
     );
   }
 
+  // ── Suggested Video Click Interception ─────────────────────────────
+
+  let suggestedClickBlocked = false; // flag to block the click after mousedown intercepts
+
+  function interceptSuggestedClicks() {
+    // We need to intercept at BOTH mousedown and click:
+    // - mousedown: show the prompt and set a flag
+    // - click: preventDefault to stop the <a> tag from navigating
+    // preventDefault on mousedown alone does NOT prevent link navigation.
+
+    function shouldIntercept(e) {
+      if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey) return null;
+      if (e.target.closest('button, yt-icon-button, ytd-menu-renderer, yt-button-shape')) return null;
+      if (window.location.pathname === '/results') return null;
+
+      const card = e.target.closest(YT.VIDEO_CARDS);
+      if (!card) return null;
+      if (document.getElementById('cleanfeed-suggested-prompt')) return null;
+
+      const title = YT.getVideoTitle(card);
+      const category = getBlockedCategoryForTitle(title);
+      if (!category) return null;
+
+      const channelName = YT.getChannelName(card);
+      if (isWhitelisted(channelName, category)) return null;
+
+      const link = card.querySelector('a[href*="/watch"], a[href*="/shorts"]');
+      const href = link ? link.href : null;
+      if (!href) return null;
+
+      return { card, category, href };
+    }
+
+    document.addEventListener('mousedown', (e) => {
+      const result = shouldIntercept(e);
+      if (!result) return;
+
+      // Set flag so the subsequent click event gets blocked
+      suggestedClickBlocked = true;
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+
+      showSuggestedVideoPrompt(result.category, result.href, result.card);
+    }, true);
+
+    document.addEventListener('click', (e) => {
+      // Block the click that follows our intercepted mousedown
+      if (suggestedClickBlocked) {
+        suggestedClickBlocked = false;
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        return;
+      }
+
+      // Also intercept clicks directly (some YouTube navigations use click only)
+      const result = shouldIntercept(e);
+      if (!result) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      showSuggestedVideoPrompt(result.category, result.href, result.card);
+    }, true);
+  }
+
+  function showSuggestedVideoPrompt(category, href, card) {
+    // Remove any existing prompt
+    const existing = document.getElementById('cleanfeed-suggested-prompt');
+    if (existing) existing.remove();
+
+    // Build with raw createElement for Trusted Types CSP safety
+
+    const logo = document.createElement('span');
+    logo.className = 'cleanfeed-cf-logo';
+    logo.textContent = 'CF';
+
+    const titleStrong = document.createElement('strong');
+    const aboutText = msg('suggestedVideoAbout', [category]);
+    titleStrong.textContent = (aboutText === 'suggestedVideoAbout') ? 'This video is about "' + category + '"' : aboutText;
+    const titleEl = document.createElement('div');
+    titleEl.appendChild(titleStrong);
+
+    const subtitleEl = document.createElement('span');
+    const askText = msg('suggestedVideoAsk');
+    subtitleEl.textContent = (askText === 'suggestedVideoAsk') ? 'Do you still want to watch it?' : askText;
+
+    function removePrompt() {
+      const el = document.getElementById('cleanfeed-suggested-prompt');
+      if (el) el.remove();
+    }
+
+    const watchBtn = document.createElement('button');
+    watchBtn.className = 'cleanfeed-btn cleanfeed-btn-primary';
+    const watchText = msg('suggestedWatchNow');
+    watchBtn.textContent = (watchText === 'suggestedWatchNow') ? 'Watch just now' : watchText;
+    watchBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      removePrompt();
+      window.location.href = href;
+    });
+
+    const skipBtn = document.createElement('button');
+    skipBtn.className = 'cleanfeed-btn cleanfeed-btn-secondary';
+    const skipText = msg('suggestedSkip');
+    skipBtn.textContent = (skipText === 'suggestedSkip') ? 'Skip' : skipText;
+    skipBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      removePrompt();
+      card.classList.add('cleanfeed-hidden');
+      logHidden(card, 'keyword', category);
+    });
+
+    const buttons = document.createElement('div');
+    buttons.className = 'cleanfeed-toast-buttons';
+    buttons.appendChild(watchBtn);
+    buttons.appendChild(skipBtn);
+
+    const bannerText = document.createElement('div');
+    bannerText.className = 'cleanfeed-inline-banner-text';
+    bannerText.appendChild(titleEl);
+    bannerText.appendChild(subtitleEl);
+
+    const content = document.createElement('div');
+    content.className = 'cleanfeed-inline-banner-content';
+    content.appendChild(logo);
+    content.appendChild(bannerText);
+
+    const promptEl = document.createElement('div');
+    promptEl.className = 'cleanfeed-inline-banner';
+    promptEl.id = 'cleanfeed-suggested-prompt';
+    promptEl.appendChild(content);
+    promptEl.appendChild(buttons);
+
+    document.body.appendChild(promptEl);
+
+    // Auto-dismiss after 8 seconds (same as Skip)
+    setTimeout(() => {
+      if (document.getElementById('cleanfeed-suggested-prompt')) {
+        removePrompt();
+      }
+    }, 8000);
+  }
+
   // ── Menu Popup Detection ──────────────────────────────────────────────
 
   function watchForMenuPopup() {
@@ -550,11 +960,13 @@
   // ── Inject "Block Channel" into Video Menu ────────────────────────────
 
   function injectBlockOption(popup) {
-    // Get channel info from tracked video card FIRST
+    // Get channel info from tracked video card FIRST (eager resolution)
     if (!lastClickedVideoCard) return;
 
     const channelName = YT.getChannelName(lastClickedVideoCard);
     const channelId = YT.getChannelId(lastClickedVideoCard);
+    const videoTitle = YT.getVideoTitle(lastClickedVideoCard);
+    const videoCard = lastClickedVideoCard;
 
     // Check if the existing menu item already has the correct channel
     const existingItem = popup.querySelector('.cleanfeed-menu-item');
@@ -572,25 +984,8 @@
     if (!items || items.length === 0) return;
 
     if (items.length < 2) return;
-    if (!channelName) return;
 
-    // Create separator + block item
-    const separator = cfEl('div', { className: 'cleanfeed-menu-separator' });
-
-    const blockItem = cfEl(
-      'div',
-      {
-        className: 'cleanfeed-menu-item',
-        role: 'menuitem',
-        tabindex: '0',
-        'data-cf-channel': channelName,
-        onClick: () => handleBlockClick(channelName, channelId),
-      },
-      [
-        cfLogo(),
-        cfEl('span', { textContent: msg('blockChannelPermanently') }),
-      ]
-    );
+    const detectedCategory = detectTopicFromTitle(videoTitle);
 
     // Find "don't recommend" item for insertion point
     let insertAfter = null;
@@ -605,13 +1000,57 @@
       }
     }
 
-    if (insertAfter && insertAfter.nextSibling) {
-      listbox.insertBefore(separator, insertAfter.nextSibling);
-      listbox.insertBefore(blockItem, separator.nextSibling);
-    } else {
-      listbox.appendChild(separator);
-      listbox.appendChild(blockItem);
+    // Insert point reference
+    let lastInserted = insertAfter;
+
+    function insertItem(element) {
+      if (lastInserted && lastInserted.nextSibling) {
+        listbox.insertBefore(element, lastInserted.nextSibling);
+      } else {
+        listbox.appendChild(element);
+      }
+      lastInserted = element;
     }
+
+    // Separator
+    insertItem(cfEl('div', { className: 'cleanfeed-menu-separator' }));
+
+    // Block channel item (only if channel name is available)
+    if (channelName) {
+      insertItem(cfEl(
+        'div',
+        {
+          className: 'cleanfeed-menu-item',
+          role: 'menuitem',
+          tabindex: '0',
+          'data-cf-channel': channelName,
+          onClick: () => handleBlockClick(channelName, channelId),
+        },
+        [
+          cfLogo(),
+          cfEl('span', { textContent: msg('blockChannelPermanently') }),
+        ]
+      ));
+    }
+
+    // "Not interested in this topic" item — always shown
+    insertItem(cfEl('div', { className: 'cleanfeed-menu-separator' }));
+    insertItem(cfEl(
+      'div',
+      {
+        className: 'cleanfeed-menu-item cleanfeed-menu-item-topic',
+        role: 'menuitem',
+        tabindex: '0',
+        onClick: () => {
+          document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
+          showTopicBlockMenu(videoCard, videoTitle, detectedCategory);
+        },
+      },
+      [
+        cfLogo(),
+        cfEl('span', { textContent: msg('notInterestedInTopic') }),
+      ]
+    ));
   }
 
   // ── Handle Block Click ────────────────────────────────────────────────
@@ -666,15 +1105,321 @@
       }
     }
 
-    // If on watch page, hide sidebar videos from this channel immediately
+    // If on watch page, hide sidebar videos from this channel immediately.
+    // Covers BOTH old layout (ytd-compact-video-renderer) AND new 2025 layout.
     if (window.location.pathname === '/watch') {
+      // Old layout
       document.querySelectorAll('ytd-compact-video-renderer').forEach((card) => {
         const ch = YT.getChannelName(card);
         if (ch && ch.toLowerCase() === name.toLowerCase()) {
           card.classList.add('cleanfeed-hidden');
         }
       });
+
+      // New layout: find by channel name in sidebar text
+      document.querySelectorAll('#secondary #video-title, ytd-watch-next-secondary-results-renderer #video-title').forEach((titleEl) => {
+        let container = titleEl;
+        let bestContainer = titleEl.parentElement;
+        for (let i = 0; i < 8 && container; i++) {
+          container = container.parentElement;
+          if (!container) break;
+          if (container.id === 'items' || container.id === 'contents' ||
+              container.id === 'secondary') break;
+          bestContainer = container;
+        }
+        const ch = YT.getChannelName(bestContainer);
+        if (ch && ch.toLowerCase() === name.toLowerCase()) {
+          bestContainer.classList.add('cleanfeed-hidden');
+        }
+      });
+
+      // Also hide the specific clicked card's full container
+      if (lastClickedVideoCard) {
+        let hideTarget = lastClickedVideoCard;
+        let el = hideTarget;
+        for (let i = 0; i < 6 && el; i++) {
+          if (el.parentElement && (el.parentElement.id === 'items' || el.parentElement.id === 'contents' ||
+              el.parentElement.id === 'secondary' || el.parentElement.tagName === 'YTD-WATCH-NEXT-SECONDARY-RESULTS-RENDERER')) {
+            hideTarget = el;
+            break;
+          }
+          el = el.parentElement;
+        }
+        hideTarget.classList.add('cleanfeed-hidden');
+      }
     }
+  }
+
+  // ── Handle Topic Block Click ──────────────────────────────────────────
+
+  function showTopicBlockMenu(card, title, detectedCategory) {
+    // Remove any existing topic menu
+    const existing = document.getElementById('cleanfeed-topic-menu');
+    if (existing) existing.remove();
+
+    function removeMenu() {
+      const el = document.getElementById('cleanfeed-topic-menu');
+      if (el) el.remove();
+    }
+
+    async function blockKeyword(keyword) {
+      removeMenu();
+      const result = await sendMsg({ action: 'addKeyword', keyword });
+      if (result && result.reason === 'free_limit') {
+        showToast(msg('keywordLimitToast'));
+        sendMsg({ action: 'openPaymentPage' });
+        return;
+      }
+      if (result && result.reason === 'already_exists') {
+        showToast(msg('keywordAlreadyBlocked', [keyword]) !== 'keywordAlreadyBlocked'
+          ? msg('keywordAlreadyBlocked', [keyword])
+          : '"' + keyword + '" is already blocked.');
+        return;
+      }
+      showToast(msg('keywordBlockedToast', [keyword]) !== 'keywordBlockedToast'
+        ? msg('keywordBlockedToast', [keyword])
+        : 'Blocked keyword: "' + keyword + '"');
+      // Hide the full video container (walk up to find it for sidebar cards)
+      let hideTarget = card;
+      if (!hideTarget.matches || !hideTarget.matches(YT.VIDEO_CARDS)) {
+        let el = card;
+        for (let i = 0; i < 6 && el; i++) {
+          if (el.parentElement && (el.parentElement.id === 'items' || el.parentElement.id === 'contents' ||
+              el.parentElement.id === 'secondary' || el.parentElement.tagName === 'YTD-WATCH-NEXT-SECONDARY-RESULTS-RENDERER')) {
+            hideTarget = el;
+            break;
+          }
+          el = el.parentElement;
+        }
+      }
+      hideTarget.classList.add('cleanfeed-hidden');
+      logHidden(card, 'keyword', keyword);
+      blockedKeywords.push({ keyword, addedAt: Date.now() });
+      document.querySelectorAll('[data-cf-checked]').forEach((el) => { delete el.dataset.cfChecked; });
+      filterPage();
+    }
+
+    // --- Header ---
+    const logo = document.createElement('span');
+    logo.className = 'cleanfeed-cf-logo';
+    logo.textContent = 'CF';
+
+    const titleEl = document.createElement('strong');
+    titleEl.textContent = msg('notInterestedInTopic');
+
+    const videoTitle = document.createElement('span');
+    videoTitle.style.cssText = 'font-size:12px;color:var(--cf-text-secondary);display:block;margin-top:2px;';
+    videoTitle.textContent = title ? '"' + title.substring(0, 60) + (title.length > 60 ? '...' : '') + '"' : '';
+
+    const titleWrap = document.createElement('div');
+    titleWrap.className = 'cleanfeed-inline-banner-text';
+    titleWrap.appendChild(titleEl);
+    titleWrap.appendChild(videoTitle);
+
+    // Close button (X)
+    const closeBtn = document.createElement('button');
+    closeBtn.style.cssText = 'background:none;border:none;font-size:18px;color:var(--cf-text-muted);cursor:pointer;padding:0 4px;flex-shrink:0;line-height:1;';
+    closeBtn.textContent = '\u00d7';
+    closeBtn.addEventListener('click', (e) => { e.stopPropagation(); removeMenu(); });
+
+    const headerRow = document.createElement('div');
+    headerRow.style.cssText = 'display:flex;align-items:flex-start;justify-content:space-between;width:100%;';
+    const contentWrap = document.createElement('div');
+    contentWrap.className = 'cleanfeed-inline-banner-content';
+    contentWrap.appendChild(logo);
+    contentWrap.appendChild(titleWrap);
+    headerRow.appendChild(contentWrap);
+    headerRow.appendChild(closeBtn);
+
+    // --- Options ---
+    const options = document.createElement('div');
+    options.style.cssText = 'display:flex;flex-direction:column;gap:8px;width:100%;margin-top:12px;';
+
+    // Option 1: Block detected category (if found)
+    if (detectedCategory) {
+      const catLabel = detectedCategory.charAt(0).toUpperCase() + detectedCategory.slice(1);
+
+      const catOption = document.createElement('div');
+      catOption.style.cssText = 'display:flex;flex-direction:column;gap:2px;';
+
+      const catBtn = document.createElement('button');
+      catBtn.className = 'cleanfeed-btn cleanfeed-btn-danger';
+      catBtn.style.cssText = 'width:100%;text-align:left;padding:10px 14px;font-size:14px;';
+      catBtn.textContent = msg('blockEntireCategory', [catLabel]) !== 'blockEntireCategory'
+        ? msg('blockEntireCategory', [catLabel])
+        : 'Block entire category: ' + catLabel;
+      catBtn.addEventListener('click', (e) => { e.stopPropagation(); blockKeyword(detectedCategory); });
+
+      const catDesc = document.createElement('span');
+      catDesc.style.cssText = 'font-size:11px;color:var(--cf-text-muted);padding:0 4px;';
+      catDesc.textContent = msg('blockCategoryDesc') !== 'blockCategoryDesc'
+        ? msg('blockCategoryDesc')
+        : 'Hides all videos related to ' + catLabel + ' across YouTube';
+
+      catOption.appendChild(catBtn);
+      catOption.appendChild(catDesc);
+      options.appendChild(catOption);
+    }
+
+    // Option 2: Custom keyword input
+    const kwOption = document.createElement('div');
+    kwOption.style.cssText = 'display:flex;flex-direction:column;gap:4px;';
+
+    const kwLabel = document.createElement('span');
+    kwLabel.style.cssText = 'font-size:12px;font-weight:600;color:var(--cf-text-secondary);';
+    kwLabel.textContent = msg('blockSpecificKeyword') !== 'blockSpecificKeyword'
+      ? msg('blockSpecificKeyword')
+      : 'Or block a specific keyword:';
+
+    const inputRow = document.createElement('div');
+    inputRow.style.cssText = 'display:flex;gap:6px;align-items:center;';
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.placeholder = msg('typeKeywordPlaceholder') !== 'typeKeywordPlaceholder'
+      ? msg('typeKeywordPlaceholder')
+      : 'e.g. starcraft, uncharted...';
+    input.style.cssText = 'flex:1;padding:8px 10px;border:1px solid var(--cf-border);border-radius:6px;font-size:13px;background:var(--cf-bg);color:var(--cf-text);outline:none;font-family:inherit;';
+
+    // Category dropdown — assign keyword to a category instead of standalone
+    const catSelect = document.createElement('select');
+    catSelect.style.cssText = 'padding:7px 6px;border:1px solid var(--cf-border);border-radius:6px;font-size:12px;background:var(--cf-bg);color:var(--cf-text);font-family:inherit;cursor:pointer;';
+    const noneOpt = document.createElement('option');
+    noneOpt.value = '';
+    noneOpt.textContent = msg('addToCategory') !== 'addToCategory' ? msg('addToCategory') : 'Add to category:';
+    catSelect.appendChild(noneOpt);
+    // Only show blocked categories as options
+    const blockedKwSet = new Set(blockedKeywords.map(k => k.keyword.toLowerCase()));
+    const CATS = [
+      'crypto','gambling','politics','gossip','asmr','mukbang','pranks','astrology',
+      'conspiracy','nsfw','clickbait','gaming','kpop','anime','diet','hustle',
+      'horror','true_crime','reaction','unboxing'
+    ];
+    for (const c of CATS) {
+      if (blockedKwSet.has(c)) {
+        const opt = document.createElement('option');
+        opt.value = c;
+        opt.textContent = c.charAt(0).toUpperCase() + c.slice(1).replace('_', ' ');
+        catSelect.appendChild(opt);
+      }
+    }
+
+    const inputBtn = document.createElement('button');
+    inputBtn.className = 'cleanfeed-btn cleanfeed-btn-primary';
+    inputBtn.style.cssText = 'padding:8px 14px;';
+    inputBtn.textContent = 'Block';
+
+    async function doBlock() {
+      const kw = input.value.trim();
+      if (!kw) return;
+      const selectedCat = catSelect.value;
+      if (selectedCat) {
+        // Add as custom synonym to the selected category
+        removeMenu();
+        const result = await sendMsg({ action: 'addCustomSynonym', category: selectedCat, synonym: kw });
+        if (result && result.reason === 'already_exists') {
+          showToast('"' + kw + '" is already in ' + selectedCat);
+        } else {
+          showToast(msg('keywordBlockedToast', [kw]) !== 'keywordBlockedToast'
+            ? msg('keywordBlockedToast', [kw]) : 'Added "' + kw + '" to ' + selectedCat);
+        }
+        // Hide the card and re-filter
+        let hideTarget = card;
+        if (!hideTarget.matches || !hideTarget.matches(YT.VIDEO_CARDS)) {
+          let el = card;
+          for (let i = 0; i < 6 && el; i++) {
+            if (el.parentElement && (el.parentElement.id === 'items' || el.parentElement.id === 'contents' ||
+                el.parentElement.id === 'secondary' || el.parentElement.tagName === 'YTD-WATCH-NEXT-SECONDARY-RESULTS-RENDERER')) {
+              hideTarget = el; break;
+            }
+            el = el.parentElement;
+          }
+        }
+        hideTarget.classList.add('cleanfeed-hidden');
+        document.querySelectorAll('[data-cf-checked]').forEach((el) => { delete el.dataset.cfChecked; });
+        // Reload state so getExpandedKeywords picks up the custom synonym
+        const newState = await sendMsg({ action: 'getFullState' });
+        if (newState) cfSetSynonymFilters(newState.disabledSynonyms, newState.customSynonyms);
+        filterPage();
+      } else {
+        blockKeyword(kw);
+      }
+    }
+
+    inputBtn.addEventListener('click', (e) => { e.stopPropagation(); doBlock(); });
+    input.addEventListener('keypress', (e) => { if (e.key === 'Enter') { e.stopPropagation(); doBlock(); } });
+
+    const kwDesc = document.createElement('span');
+    kwDesc.style.cssText = 'font-size:11px;color:var(--cf-text-muted);padding:0 4px;';
+    kwDesc.textContent = msg('blockKeywordDesc') !== 'blockKeywordDesc'
+      ? msg('blockKeywordDesc')
+      : 'Hides all videos whose title contains this word';
+
+    inputRow.appendChild(input);
+    inputRow.appendChild(catSelect);
+    inputRow.appendChild(inputBtn);
+    kwOption.appendChild(kwLabel);
+    kwOption.appendChild(inputRow);
+    kwOption.appendChild(kwDesc);
+    options.appendChild(kwOption);
+
+    // Separator
+    const separator = document.createElement('div');
+    separator.style.cssText = 'height:1px;background:var(--cf-border);margin:4px 0;';
+    options.appendChild(separator);
+
+    // Option 3: Skip (just hide this one video)
+    const skipOption = document.createElement('div');
+    skipOption.style.cssText = 'display:flex;flex-direction:column;gap:2px;';
+
+    const skipBtn = document.createElement('button');
+    skipBtn.className = 'cleanfeed-btn cleanfeed-btn-secondary';
+    skipBtn.style.cssText = 'width:100%;text-align:center;padding:8px 14px;';
+    skipBtn.textContent = msg('skipThisVideo') !== 'skipThisVideo'
+      ? msg('skipThisVideo')
+      : 'Skip this video';
+    skipBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      removeMenu();
+      // Find the outermost video container to hide (including thumbnail).
+      // Walk up from card until hitting a list boundary.
+      let hideTarget = card;
+      if (!hideTarget.matches || !hideTarget.matches(YT.VIDEO_CARDS)) {
+        let el = card;
+        for (let i = 0; i < 6 && el; i++) {
+          if (el.parentElement && (el.parentElement.id === 'items' || el.parentElement.id === 'contents' ||
+              el.parentElement.id === 'secondary' || el.parentElement.tagName === 'YTD-WATCH-NEXT-SECONDARY-RESULTS-RENDERER')) {
+            hideTarget = el; // this is the direct child of the list — hide this
+            break;
+          }
+          el = el.parentElement;
+        }
+      }
+      hideTarget.classList.add('cleanfeed-hidden');
+    });
+
+    const skipDesc = document.createElement('span');
+    skipDesc.style.cssText = 'font-size:11px;color:var(--cf-text-muted);padding:0 4px;text-align:center;';
+    skipDesc.textContent = msg('skipDesc') !== 'skipDesc'
+      ? msg('skipDesc')
+      : 'Only hides this one video, nothing else';
+
+    skipOption.appendChild(skipBtn);
+    skipOption.appendChild(skipDesc);
+    options.appendChild(skipOption);
+
+    // --- Build prompt (NO auto-dismiss — stays until user clicks) ---
+    const promptEl = document.createElement('div');
+    promptEl.className = 'cleanfeed-inline-banner';
+    promptEl.id = 'cleanfeed-topic-menu';
+    promptEl.style.cssText = 'flex-direction:column;align-items:stretch;position:fixed;top:56px;left:50%;transform:translateX(-50%);z-index:99999;width:90%;max-width:520px;animation:cf-banner-in 0.3s ease forwards;';
+    promptEl.appendChild(headerRow);
+    promptEl.appendChild(options);
+
+    document.body.appendChild(promptEl);
+
+    // Focus the input for quick typing
+    setTimeout(() => input.focus(), 100);
   }
 
   // ── Channel Page Button ───────────────────────────────────────────────
@@ -812,29 +1557,74 @@
       searchInput.addEventListener('keydown', (e) => {
         if (e.key !== 'Enter') return;
         const query = searchInput.value.trim();
-        if (query) triggerInterestCheck(query);
+        if (query) scheduleInterestCheck(query);
       });
 
       const searchBtn = document.querySelector('#search-icon-legacy, button[aria-label="Search"], ytd-searchbox button');
       if (searchBtn) {
         searchBtn.addEventListener('click', () => {
           const query = searchInput.value.trim();
-          if (query) triggerInterestCheck(query);
+          if (query) scheduleInterestCheck(query);
         });
       }
     }
 
-    // --- URL-based detection (primary & most reliable trigger) ---
-    // Fires regardless of how the search was initiated: keyboard, button,
-    // suggestion click, voice, URL paste, etc.
-    if (window.location.pathname === '/results') {
-      const params = new URLSearchParams(window.location.search);
-      const query = params.get('search_query');
-      if (query) {
-        // Small delay to let the search page render
-        setTimeout(() => triggerInterestCheck(query), 800);
+    // --- URL-based detection ---
+    checkSearchQueryChanged();
+  }
+
+  // Poll URL every second to catch search changes that bypass yt-navigate-finish
+  function startSearchQueryWatcher() {
+    setInterval(() => {
+      if (window.location.pathname === '/results') {
+        checkSearchQueryChanged();
+      }
+    }, 1000);
+  }
+
+  // Detect when the search query in the URL changes
+  function checkSearchQueryChanged() {
+    if (window.location.pathname !== '/results') return;
+    const params = new URLSearchParams(window.location.search);
+    const query = params.get('search_query');
+    if (query && query !== lastKnownSearchQuery) {
+      lastKnownSearchQuery = query;
+      scheduleInterestCheck(query);
+    }
+  }
+
+  // Wait for search results DOM to be ready, then trigger interest check
+  function scheduleInterestCheck(query) {
+    lastKnownSearchQuery = query; // prevent duplicate triggers from other paths
+    if (pendingCuriosityCheck) {
+      clearTimeout(pendingCuriosityCheck);
+      pendingCuriosityCheck = null;
+    }
+    // Remove stale prompt from previous search
+    removeCuriosityPrompt();
+
+    let attempts = 0;
+    const maxAttempts = 30; // 3s max wait
+    function waitForResults() {
+      attempts++;
+      const results = document.querySelector(
+        'ytd-section-list-renderer #contents ytd-item-section-renderer, ' +
+        'ytd-search ytd-item-section-renderer, ' +
+        'ytd-search ytd-video-renderer'
+      );
+      if (results) {
+        triggerInterestCheck(query);
+      } else if (attempts < maxAttempts) {
+        pendingCuriosityCheck = setTimeout(waitForResults, 100);
       }
     }
+    waitForResults();
+  }
+
+  // Remove any visible curiosity prompt by ID (DOM-based, not closure-based)
+  function removeCuriosityPrompt() {
+    const el = document.getElementById('cleanfeed-curiosity-prompt');
+    if (el) el.remove();
   }
 
   async function triggerInterestCheck(query) {
@@ -863,17 +1653,14 @@
     lastPromptedQuery = query;
     sessionPromptCount++;
     console.log('CleanFeed: showing curiosity prompt #' + sessionPromptCount);
-    showCuriosityPrompt(query, isPro, sessionPromptCount <= 3);
+    showCuriosityPrompt(query, isPro);
   }
 
   // ── Curiosity Window Prompt ───────────────────────────────────────────
 
-  function showCuriosityPrompt(query, proStatus, useInlineBanner) {
-    // Remove any existing prompt
-    const existingBanner = document.querySelector('.cleanfeed-inline-banner');
-    const existingToast = document.querySelector('.cleanfeed-curiosity-toast');
-    if (existingBanner) existingBanner.remove();
-    if (existingToast) dismissToast(existingToast);
+  function showCuriosityPrompt(query, proStatus) {
+    // Remove any existing prompt (DOM-based lookup, not closure)
+    removeCuriosityPrompt();
 
     // Build all elements with raw createElement + textContent to avoid any
     // Trusted Types CSP violations (cfEl chains can fail silently on YouTube).
@@ -895,50 +1682,58 @@
     const rememberText = msg('rememberInterest');
     subtitleEl.textContent = (rememberText === 'rememberInterest') ? 'How long do you want to see this content?' : rememberText;
 
-    // -- Buttons --
-    const justNowBtn = document.createElement('button');
-    justNowBtn.className = 'cleanfeed-btn cleanfeed-btn-secondary';
-    const jnText = msg('curiosityJustNow');
-    justNowBtn.textContent = (jnText === 'curiosityJustNow') ? 'Just now' : jnText;
-    justNowBtn.addEventListener('click', () => {
+    // -- Button helper (stopPropagation prevents YouTube from intercepting clicks) --
+    function makeBtn(className, labelKey, fallback, handler) {
+      const btn = document.createElement('button');
+      btn.className = 'cleanfeed-btn ' + className;
+      const text = msg(labelKey);
+      btn.textContent = (text === labelKey) ? fallback : text;
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        handler();
+        removeCuriosityPrompt();
+      });
+      return btn;
+    }
+
+    // Helper: un-hide all cards and re-filter so interest exemption takes effect
+    function refilterAfterInterest() {
+      document.querySelectorAll('.cleanfeed-hidden').forEach((el) => {
+        el.classList.remove('cleanfeed-hidden');
+      });
+      document.querySelectorAll('[data-cf-checked]').forEach((el) => {
+        delete el.dataset.cfChecked;
+      });
+      filterPage();
+    }
+
+    const justNowBtn = makeBtn('cleanfeed-btn-secondary', 'curiosityJustNow', 'Just now', () => {
       console.log('CleanFeed: Just now clicked, isPro:', proStatus);
       activeJustNowQueries.add(query);
-      removePrompt();
-      if (!proStatus) {
-        sendMsg({ action: 'openPaymentPage' });
-      }
+      refilterAfterInterest();
+      if (!proStatus) sendMsg({ action: 'openPaymentPage' });
     });
 
-    const todayBtn = document.createElement('button');
-    todayBtn.className = 'cleanfeed-btn cleanfeed-btn-secondary';
-    const tdText = msg('curiosityToday');
-    todayBtn.textContent = (tdText === 'curiosityToday') ? 'Today' : tdText;
-    todayBtn.addEventListener('click', () => {
+    const todayBtn = makeBtn('cleanfeed-btn-secondary', 'curiosityToday', 'Today', () => {
       console.log('CleanFeed: Today clicked, isPro:', proStatus);
       const endOfDay = new Date();
       endOfDay.setHours(23, 59, 59, 999);
-      sendMsg({
-        action: 'addInterest',
-        query,
-        expiresAt: endOfDay.getTime(),
+      sendMsg({ action: 'addInterest', query, expiresAt: endOfDay.getTime() }).then(() => {
+        // Reload interests into local state before re-filtering
+        savedInterestQueries.push(query.toLowerCase());
+        refilterAfterInterest();
       });
-      removePrompt();
-      if (!proStatus) {
-        sendMsg({ action: 'openPaymentPage' });
-      }
+      if (!proStatus) sendMsg({ action: 'openPaymentPage' });
     });
 
-    const alwaysBtn = document.createElement('button');
-    alwaysBtn.className = 'cleanfeed-btn cleanfeed-btn-primary';
-    const alText = msg('curiosityAlways');
-    alwaysBtn.textContent = (alText === 'curiosityAlways') ? 'Always' : alText;
-    alwaysBtn.addEventListener('click', () => {
+    const alwaysBtn = makeBtn('cleanfeed-btn-primary', 'curiosityAlways', 'Always', () => {
       console.log('CleanFeed: Always clicked, isPro:', proStatus);
-      sendMsg({ action: 'addInterest', query });
-      removePrompt();
-      if (!proStatus) {
-        sendMsg({ action: 'openPaymentPage' });
-      }
+      sendMsg({ action: 'addInterest', query }).then(() => {
+        savedInterestQueries.push(query.toLowerCase());
+        refilterAfterInterest();
+      });
+      if (!proStatus) sendMsg({ action: 'openPaymentPage' });
     });
 
     const buttons = document.createElement('div');
@@ -947,83 +1742,27 @@
     buttons.appendChild(todayBtn);
     buttons.appendChild(alwaysBtn);
 
-    let promptEl;
+    // -- Always build as inline banner at top --
+    const bannerText = document.createElement('div');
+    bannerText.className = 'cleanfeed-inline-banner-text';
+    bannerText.appendChild(titleEl);
+    bannerText.appendChild(subtitleEl);
 
-    function removePrompt() {
-      if (promptEl) {
-        if (promptEl.classList.contains('cleanfeed-inline-banner')) {
-          promptEl.remove();
-        } else {
-          dismissToast(promptEl);
-        }
-      }
-    }
+    const content = document.createElement('div');
+    content.className = 'cleanfeed-inline-banner-content';
+    content.appendChild(logo);
+    content.appendChild(bannerText);
 
-    if (useInlineBanner) {
-      const bannerText = document.createElement('div');
-      bannerText.className = 'cleanfeed-inline-banner-text';
-      bannerText.appendChild(titleEl);
-      bannerText.appendChild(subtitleEl);
+    const promptEl = document.createElement('div');
+    promptEl.className = 'cleanfeed-inline-banner';
+    promptEl.id = 'cleanfeed-curiosity-prompt';
+    promptEl.appendChild(content);
+    promptEl.appendChild(buttons);
 
-      const content = document.createElement('div');
-      content.className = 'cleanfeed-inline-banner-content';
-      content.appendChild(logo);
-      content.appendChild(bannerText);
-
-      promptEl = document.createElement('div');
-      promptEl.className = 'cleanfeed-inline-banner';
-      promptEl.appendChild(content);
-      promptEl.appendChild(buttons);
-
-      // Try multiple anchor points for the inline banner
-      const anchorSelectors = [
-        'ytd-section-list-renderer',
-        'ytd-search',
-        'ytd-item-section-renderer',
-        '#contents.ytd-search',
-        '#container.ytd-search'
-      ];
-      let anchor = null;
-      for (const sel of anchorSelectors) {
-        anchor = document.querySelector(sel);
-        if (anchor) break;
-      }
-
-      if (anchor && anchor.parentNode) {
-        anchor.parentNode.insertBefore(promptEl, anchor);
-        console.log('CleanFeed: inline banner inserted before', anchor.tagName);
-      } else {
-        // Fallback: insert at top of page content or use fixed position
-        console.log('CleanFeed: no anchor found, inserting at top of page-manager');
-        const pageManager = document.querySelector('ytd-page-manager, #content, #page-manager');
-        if (pageManager) {
-          pageManager.prepend(promptEl);
-        } else {
-          // Last resort: fixed position toast
-          promptEl.style.position = 'fixed';
-          promptEl.style.top = '70px';
-          promptEl.style.left = '50%';
-          promptEl.style.transform = 'translateX(-50%)';
-          promptEl.style.zIndex = '99999';
-          document.body.appendChild(promptEl);
-        }
-      }
-
-      // No auto-dismiss — stays until user clicks a button
-    } else {
-      const toastLogo = document.createElement('span');
-      toastLogo.className = 'cleanfeed-cf-logo';
-      toastLogo.textContent = 'CF';
-      const toastText = document.createElement('div');
-      toastText.className = 'cleanfeed-toast-text';
-      toastText.appendChild(titleEl);
-      toastText.appendChild(subtitleEl);
-      promptEl = buildToastEl([toastLogo, toastText, buttons]);
-      promptEl.classList.add('cleanfeed-curiosity-toast');
-      document.body.appendChild(promptEl);
-
-      // No auto-dismiss — stays until user clicks a button
-    }
+    // Append to document.body — YouTube never replaces body children,
+    // so the prompt is immune to SPA DOM swaps. CSS handles fixed positioning.
+    document.body.appendChild(promptEl);
+    console.log('CleanFeed: curiosity prompt shown for "' + query + '"');
   }
 
   // ── Subscription Exception Toast ──────────────────────────────────────

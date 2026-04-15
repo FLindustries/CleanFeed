@@ -2,12 +2,55 @@
 
 let state = {};
 let settingsUpdateInFlight = false;
+let _customMessages = null;
+
+async function loadCustomLanguage() {
+  const { settings } = await chrome.storage.local.get('settings');
+  const lang = settings?.language || 'auto';
+  if (lang === 'auto') { _customMessages = null; return; }
+  try {
+    const url = chrome.runtime.getURL('_locales/' + lang + '/messages.json');
+    const resp = await fetch(url);
+    _customMessages = await resp.json();
+  } catch (e) { _customMessages = null; }
+}
+
+function cfMsg(key, subs) {
+  if (_customMessages && _customMessages[key]) {
+    let text = _customMessages[key].message;
+    if (subs && Array.isArray(subs)) {
+      subs.forEach((sub, i) => {
+        text = text.replace('$' + (i + 1), sub);
+        const placeholders = _customMessages[key].placeholders;
+        if (placeholders) {
+          for (const [name, ph] of Object.entries(placeholders)) {
+            if (ph.content === '$' + (i + 1)) {
+              text = text.replace('$' + name.toUpperCase() + '$', sub);
+            }
+          }
+        }
+      });
+    }
+    return text;
+  }
+  try {
+    return chrome.i18n.getMessage(key, subs) || key;
+  } catch (e) {
+    return key;
+  }
+}
 
 document.addEventListener('DOMContentLoaded', async () => {
+  await loadCustomLanguage();
   await loadState();
   applyI18n();
   renderAll();
   setupTabs();
+
+  // Open full options page
+  document.getElementById('openOptionsBtn').addEventListener('click', () => {
+    chrome.runtime.openOptionsPage();
+  });
 });
 
 async function loadState() {
@@ -28,8 +71,8 @@ function notifyContentScript() {
 
 function applyI18n() {
   document.querySelectorAll('[data-i18n]').forEach(el => {
-    const msg = chrome.i18n.getMessage(el.dataset.i18n);
-    if (msg) el.textContent = msg;
+    const m = cfMsg(el.dataset.i18n);
+    if (m && m !== el.dataset.i18n) el.textContent = m;
   });
 }
 
@@ -44,7 +87,7 @@ function renderAll() {
 
 function renderBadge() {
   const badge = document.getElementById('planBadge');
-  badge.textContent = state.isPro ? chrome.i18n.getMessage('pro') : chrome.i18n.getMessage('free');
+  badge.textContent = state.isPro ? cfMsg('pro') : cfMsg('free');
   badge.classList.toggle('badge-pro', state.isPro);
 }
 
@@ -91,7 +134,7 @@ function renderControls() {
 
     const title = document.createElement('div');
     title.className = 'upgrade-title';
-    title.textContent = chrome.i18n.getMessage('unlockFeatures');
+    title.textContent = cfMsg('unlockFeatures');
     cta.appendChild(title);
 
     const subtitle = document.createElement('div');
@@ -101,7 +144,7 @@ function renderControls() {
 
     const btn = document.createElement('button');
     btn.className = 'upgrade-btn';
-    btn.textContent = chrome.i18n.getMessage('upgradeToPro');
+    btn.textContent = cfMsg('upgradeToPro');
     btn.addEventListener('click', () => chrome.runtime.sendMessage({ action: 'openPaymentPage' }));
     cta.appendChild(btn);
 
@@ -120,7 +163,7 @@ function createToggle(titleKey, descKey, isActive, isLocked, onChange) {
   titleRow.className = 'toggle-title';
 
   const titleSpan = document.createElement('span');
-  titleSpan.textContent = chrome.i18n.getMessage(titleKey);
+  titleSpan.textContent = cfMsg(titleKey);
   titleRow.appendChild(titleSpan);
 
   if (isLocked) {
@@ -134,7 +177,7 @@ function createToggle(titleKey, descKey, isActive, isLocked, onChange) {
 
   const desc = document.createElement('div');
   desc.className = 'toggle-desc';
-  desc.textContent = chrome.i18n.getMessage(descKey);
+  desc.textContent = cfMsg(descKey);
   info.appendChild(desc);
 
   item.appendChild(info);
@@ -167,14 +210,14 @@ function renderBlocked() {
   // --- Blocked Channels Section ---
   const chHeader = document.createElement('div');
   chHeader.className = 'section-header';
-  chHeader.textContent = chrome.i18n.getMessage('blocked') + ' (' + (state.blockedChannels?.length || 0) + ')';
+  chHeader.textContent = cfMsg('blocked') + ' (' + (state.blockedChannels?.length || 0) + ')';
   container.appendChild(chHeader);
 
   const channels = state.blockedChannels || [];
   if (channels.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'empty-state';
-    empty.textContent = chrome.i18n.getMessage('noBlockedChannels');
+    empty.textContent = cfMsg('noBlockedChannels');
     container.appendChild(empty);
   } else {
     channels.forEach((ch, i) => {
@@ -203,9 +246,9 @@ function renderBlocked() {
     // Clear all button
     const clearBtn = document.createElement('button');
     clearBtn.className = 'clear-all-btn';
-    clearBtn.textContent = chrome.i18n.getMessage('clearAll');
+    clearBtn.textContent = cfMsg('clearAll');
     clearBtn.addEventListener('click', async () => {
-      if (confirm(chrome.i18n.getMessage('clearAllConfirm'))) {
+      if (confirm(cfMsg('clearAllConfirm'))) {
         await chrome.runtime.sendMessage({ action: 'clearAllBlockedChannels' });
         notifyContentScript();
         await loadState();
@@ -215,7 +258,75 @@ function renderBlocked() {
     container.appendChild(clearBtn);
   }
 
-  // --- Blocked Keywords Section ---
+  // --- Category Blocking Section ---
+  const catHeader = document.createElement('div');
+  catHeader.className = 'section-header';
+  catHeader.style.marginTop = '16px';
+  catHeader.textContent = cfMsg('categoryBlocking') || 'Block by Topic';
+  container.appendChild(catHeader);
+
+  const CATEGORIES = [
+    { key: 'crypto', label: 'Crypto' },
+    { key: 'gambling', label: 'Gambling' },
+    { key: 'politics', label: 'Politics' },
+    { key: 'gossip', label: 'Gossip' },
+    { key: 'asmr', label: 'ASMR' },
+    { key: 'mukbang', label: 'Mukbang' },
+    { key: 'pranks', label: 'Pranks' },
+    { key: 'astrology', label: 'Astrology' },
+    { key: 'conspiracy', label: 'Conspiracy' },
+    { key: 'nsfw', label: 'NSFW' },
+    { key: 'clickbait', label: 'Clickbait' },
+    { key: 'gaming', label: 'Gaming' },
+    { key: 'kpop', label: 'K-Pop' },
+    { key: 'anime', label: 'Anime' },
+    { key: 'diet', label: 'Diet' },
+    { key: 'hustle', label: 'Hustle' },
+    { key: 'horror', label: 'Horror' },
+    { key: 'true_crime', label: 'True Crime' },
+    { key: 'reaction', label: 'Reaction' },
+    { key: 'unboxing', label: 'Unboxing' },
+  ];
+
+  const blockedKwSet = new Set((state.blockedKeywords || []).map(k => k.keyword.toLowerCase()));
+  const totalKeywords = (state.blockedKeywords || []).length;
+  const atFreeLimit = !state.isPro && totalKeywords >= 3;
+
+  const catGrid = document.createElement('div');
+  catGrid.className = 'category-grid';
+
+  for (const cat of CATEGORIES) {
+    const isActive = blockedKwSet.has(cat.key);
+    const isLocked = !isActive && atFreeLimit;
+    const chip = document.createElement('button');
+    chip.className = 'category-chip' + (isActive ? ' active' : '') + (isLocked ? ' locked' : '');
+    chip.textContent = cat.label + (isLocked ? ' \uD83D\uDD12' : '');
+    chip.addEventListener('click', async () => {
+      if (isActive) {
+        // Remove — find the index of this keyword
+        const keywords = state.blockedKeywords || [];
+        const idx = keywords.findIndex(k => k.keyword.toLowerCase() === cat.key);
+        if (idx >= 0) {
+          await chrome.runtime.sendMessage({ action: 'removeKeyword', index: idx });
+        }
+      } else {
+        // Add
+        const result = await chrome.runtime.sendMessage({ action: 'addKeyword', keyword: cat.key });
+        if (result.reason === 'free_limit') {
+          alert(cfMsg('keywordLimitToast'));
+          return;
+        }
+      }
+      notifyContentScript();
+      await loadState();
+      renderAll();
+    });
+    catGrid.appendChild(chip);
+  }
+
+  container.appendChild(catGrid);
+
+  // --- Custom Keywords Section ---
   const kwHeader = document.createElement('div');
   kwHeader.className = 'section-header';
   kwHeader.style.marginTop = '16px';
@@ -223,10 +334,13 @@ function renderBlocked() {
   const keywords = state.blockedKeywords || [];
   const kwCount = keywords.length;
 
+  const customKwLabel = cfMsg('customKeywords') || 'Custom Keywords';
+  const catKeys = new Set(CATEGORIES.map(c => c.key));
+  const customKwCount = keywords.filter(kw => !catKeys.has(kw.keyword.toLowerCase())).length;
   if (!state.isPro) {
-    kwHeader.textContent = chrome.i18n.getMessage('keywordBlocking') + ' (' + chrome.i18n.getMessage('keywordsUsed', [kwCount.toString()]) + ')';
+    kwHeader.textContent = customKwLabel + ' (' + cfMsg('keywordsUsed', [customKwCount.toString()]) + ')';
   } else {
-    kwHeader.textContent = chrome.i18n.getMessage('keywordBlocking') + ' (' + kwCount + ')';
+    kwHeader.textContent = customKwLabel + ' (' + customKwCount + ')';
   }
   container.appendChild(kwHeader);
 
@@ -237,7 +351,7 @@ function renderBlocked() {
   const input = document.createElement('input');
   input.className = 'keyword-input';
   input.type = 'text';
-  input.placeholder = chrome.i18n.getMessage('addKeywordPlaceholder');
+  input.placeholder = cfMsg('addKeywordPlaceholder');
   inputRow.appendChild(input);
 
   const addBtn = document.createElement('button');
@@ -252,7 +366,7 @@ function renderBlocked() {
       await loadState();
       renderAll();
     } else if (result.reason === 'free_limit') {
-      alert(chrome.i18n.getMessage('keywordLimitToast'));
+      alert(cfMsg('keywordLimitToast'));
     } else if (result.reason === 'already_exists') {
       alert('Keyword already exists.');
     }
@@ -265,14 +379,18 @@ function renderBlocked() {
   inputRow.appendChild(addBtn);
   container.appendChild(inputRow);
 
-  // Keyword list
-  if (keywords.length === 0) {
+  // Keyword list — filter out category names (shown above as chips)
+  const categoryKeys = new Set(CATEGORIES.map(c => c.key));
+  const customKeywords = keywords.filter(kw => !categoryKeys.has(kw.keyword.toLowerCase()));
+
+  if (customKeywords.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'empty-state';
-    empty.textContent = chrome.i18n.getMessage('noBlockedKeywords');
+    empty.textContent = cfMsg('noBlockedKeywords');
     container.appendChild(empty);
   } else {
-    keywords.forEach((kw, i) => {
+    customKeywords.forEach((kw) => {
+      const i = keywords.indexOf(kw); // real index for removal
       const item = document.createElement('div');
       item.className = 'list-item';
 
@@ -304,7 +422,7 @@ function renderHidden() {
   if (!state.isPro) {
     const upgrade = document.createElement('div');
     upgrade.className = 'empty-state';
-    upgrade.textContent = chrome.i18n.getMessage('hiddenVideosUpgrade');
+    upgrade.textContent = cfMsg('hiddenVideosUpgrade');
     container.appendChild(upgrade);
     return;
   }
@@ -314,7 +432,7 @@ function renderHidden() {
   if (videos.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'empty-state';
-    empty.textContent = chrome.i18n.getMessage('noHiddenVideos');
+    empty.textContent = cfMsg('noHiddenVideos');
     container.appendChild(empty);
     return;
   }
@@ -334,9 +452,9 @@ function renderHidden() {
     const reason = document.createElement('span');
     reason.className = 'list-item-reason';
     if (vid.reason.startsWith('keyword:')) {
-      reason.textContent = chrome.i18n.getMessage('keywordReason', [vid.reason.split(':')[1]]);
+      reason.textContent = cfMsg('keywordReason', [vid.reason.split(':')[1]]);
     } else if (vid.reason.startsWith('channel:')) {
-      reason.textContent = chrome.i18n.getMessage('channelReason', [vid.reason.split(':')[1]]);
+      reason.textContent = cfMsg('channelReason', [vid.reason.split(':')[1]]);
     } else {
       reason.textContent = vid.reason;
     }
@@ -346,7 +464,7 @@ function renderHidden() {
 
     const undoBtn = document.createElement('button');
     undoBtn.className = 'list-item-undo';
-    undoBtn.textContent = chrome.i18n.getMessage('undoHide');
+    undoBtn.textContent = cfMsg('undoHide');
     undoBtn.addEventListener('click', async () => {
       await chrome.runtime.sendMessage({ action: 'removeHiddenVideo', index: i });
       await loadState();
@@ -365,7 +483,7 @@ function renderInterests() {
   if (!state.isPro) {
     const upgrade = document.createElement('div');
     upgrade.className = 'empty-state';
-    upgrade.textContent = chrome.i18n.getMessage('interestsUpgrade');
+    upgrade.textContent = cfMsg('interestsUpgrade');
     container.appendChild(upgrade);
     return;
   }
@@ -376,7 +494,7 @@ function renderInterests() {
   if (keys.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'empty-state';
-    empty.textContent = chrome.i18n.getMessage('noInterests');
+    empty.textContent = cfMsg('noInterests');
     container.appendChild(empty);
     return;
   }
@@ -398,7 +516,7 @@ function renderInterests() {
     meta.className = 'list-item-meta';
     if (interest.expiresAt) {
       const remaining = Math.max(0, Math.ceil((interest.expiresAt - Date.now()) / (60 * 60 * 1000)));
-      meta.textContent = chrome.i18n.getMessage('curiosityToday') + ' (' + remaining + 'h)';
+      meta.textContent = cfMsg('curiosityToday') + ' (' + remaining + 'h)';
     } else {
       const daysAgo = Math.floor((Date.now() - interest.lastUsed) / (24 * 60 * 60 * 1000));
       const daysLeft = Math.max(0, 30 - daysAgo);

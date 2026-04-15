@@ -118,6 +118,25 @@ async function handleMessage(request) {
       return { success: true };
     }
 
+    // --- Synonym Management ---
+    case 'toggleSynonym': {
+      return await Storage.toggleSynonym(request.synonym);
+    }
+
+    case 'getDisabledSynonyms': {
+      const disabled = await Storage.getDisabledSynonyms();
+      return { disabledSynonyms: disabled };
+    }
+
+    case 'addCustomSynonym': {
+      return await Storage.addCustomSynonym(request.category, request.synonym);
+    }
+
+    case 'removeCustomSynonym': {
+      await Storage.removeCustomSynonym(request.category, request.synonym);
+      return { success: true };
+    }
+
     // --- Subscription Exception ---
     case 'whitelistChannel': {
       if (!isPro) return { success: false, reason: 'pro_only' };
@@ -195,13 +214,16 @@ async function handleMessage(request) {
       const blockedChannels = await Storage.getBlockedChannels();
       const blockedKeywords = await Storage.getBlockedKeywords();
       const whitelistedChannels = await Storage.getWhitelistedChannels();
+      const disabledSynonyms = await Storage.getDisabledSynonyms();
+      const customSynonyms = await Storage.getCustomSynonyms();
       const interests = await Storage.getInterests();
       const hiddenVideos = await Storage.getHiddenVideos();
       const onboarding = await Storage.getOnboarding();
 
       return {
         settings, stats, blockedChannels, blockedKeywords,
-        whitelistedChannels, interests, hiddenVideos, onboarding, isPro
+        whitelistedChannels, disabledSynonyms, customSynonyms,
+        interests, hiddenVideos, onboarding, isPro
       };
     }
 

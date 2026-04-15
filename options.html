@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CleanFeed Settings</title>
+  <link rel="stylesheet" href="styles/options.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header class="header">
+      <div class="header-left">
+        <div class="cf-logo">CF</div>
+        <h1 class="header-title">CleanFeed</h1>
+        <span class="header-badge" id="planBadge">FREE</span>
+      </div>
+      <div class="header-right">
+        <span class="version" id="versionText"></span>
+      </div>
+    </header>
+
+    <!-- Nav -->
+    <nav class="nav">
+      <button class="nav-item active" data-section="settings" data-i18n="controls">Settings</button>
+      <button class="nav-item" data-section="channels" data-i18n="blocked">Blocked Channels</button>
+      <button class="nav-item" data-section="topics" data-i18n="topicsAndKeywords">Topics &amp; Keywords</button>
+      <button class="nav-item" data-section="hidden" data-i18n="hiddenVideos">Hidden Videos</button>
+      <button class="nav-item" data-section="interests" data-i18n="interests">Interests</button>
+      <button class="nav-item" data-section="about" data-i18n="aboutAndSupport">About &amp; Support</button>
+    </nav>
+
+    <!-- Sections -->
+    <main>
+      <!-- Settings -->
+      <section class="section active" id="section-settings">
+        <h2 data-i18n="controls">Settings</h2>
+        <div id="settings-list"></div>
+      </section>
+
+      <!-- Blocked Channels -->
+      <section class="section" id="section-channels">
+        <h2 data-i18n="blocked">Blocked Channels</h2>
+        <div class="section-desc" id="channelCount"></div>
+        <div id="channel-list"></div>
+        <button class="btn btn-danger" id="clearChannelsBtn" style="display:none" data-i18n="clearAll">Clear All</button>
+      </section>
+
+      <!-- Topics & Keywords -->
+      <section class="section" id="section-topics">
+        <h2 data-i18n="topicsAndKeywords">Topics &amp; Keywords</h2>
+
+        <h3 data-i18n="categoryBlocking">Block by Topic</h3>
+        <p class="section-desc">Toggle a topic to block all related content. Click the arrow to see which terms are included.</p>
+        <div id="category-list"></div>
+
+        <h3 data-i18n="customKeywords" style="margin-top:24px">Custom Keywords</h3>
+        <div class="input-row" id="keyword-input-row">
+          <input type="text" class="input" id="keywordInput" data-i18n-placeholder="addKeywordPlaceholder" placeholder="e.g. gaming, drama, react...">
+          <button class="btn btn-primary" id="addKeywordBtn">+</button>
+        </div>
+        <div id="keyword-list"></div>
+      </section>
+
+      <!-- Hidden Videos -->
+      <section class="section" id="section-hidden">
+        <h2 data-i18n="hiddenVideos">Hidden Videos</h2>
+        <div id="hidden-list"></div>
+      </section>
+
+      <!-- Interests -->
+      <section class="section" id="section-interests">
+        <h2 data-i18n="interests">Interests</h2>
+        <div id="interest-list"></div>
+      </section>
+
+      <!-- About & Support -->
+      <section class="section" id="section-about">
+        <h2 data-i18n="aboutAndSupport">About &amp; Support</h2>
+
+        <div class="about-card">
+          <h3>CleanFeed</h3>
+          <p data-i18n="extensionDescription">YouTube That Respects You. Permanent channel blocking, keyword filtering, interest boundaries, and Shorts removal.</p>
+          <p class="muted" id="aboutVersion"></p>
+        </div>
+
+        <div class="about-card">
+          <h3 data-i18n="reportBug">Report a Bug</h3>
+          <p data-i18n="reportBugDesc">Found something that doesn't work? Let us know so we can fix it.</p>
+          <button class="btn btn-secondary" id="bugReportBtn" data-i18n="reportBug">Report a Bug</button>
+        </div>
+
+        <div class="about-card" id="upgradeCard">
+          <h3 data-i18n="upgradeToPro">Upgrade to Pro</h3>
+          <p data-i18n="upgradeProDesc">Unlimited keywords, interest boundaries, smart decay, hidden video log, and subscription exceptions.</p>
+          <button class="btn btn-primary" id="upgradeBtn" data-i18n="upgradeToPro">Upgrade to Pro</button>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="options.js"></script>
+</body>
+</html>
