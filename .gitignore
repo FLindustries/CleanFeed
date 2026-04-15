@@ -1,2 +1,17 @@
-.superpowers/
+# Build artifacts
 *.zip
+*.crx
+*.pem
+
+# IDE / tools
+.superpowers/
+.claude/
+.vscode/
+*.log
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Stray / temp files
+*_committed.js
