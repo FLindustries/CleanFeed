@@ -1190,8 +1190,9 @@ function renderInterests() {
 // ── About ──
 
 function renderAbout() {
-  const upgradeCard = document.getElementById('upgradeBtn').closest('.about-card');
-  if (state.isPro) {
+  const upgradeCard = document.getElementById('upgradeCard');
+  // Replaced once: after that #upgradeBtn is gone (Pro can arrive while the page is open)
+  if (upgradeCard && upgradeCard.querySelector('#upgradeBtn') && state.isPro) {
     // Replace "Upgrade" card with "You are Pro" message
     upgradeCard.textContent = '';
     const h3 = document.createElement('h3');

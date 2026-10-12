@@ -17,10 +17,10 @@ try {
 // extpay.getUser() is a request to extensionpay.com (once the user has ever
 // opened the payment page), so the answer is cached in memory and in
 // chrome.storage.local `proStatusCache`: { isPro, checkedAt }. It is
-// refreshed on service worker start, when ExtPay reports a payment, and in
-// the background when older than PRO_CACHE_TTL_MS. A failed refresh keeps the
-// last known answer (a paying user stays Pro offline); with no answer yet, a
-// failure means free.
+// refreshed on service worker start, when ExtPay reports a payment or saves a
+// new answer, after a checkout, and in the background when older than
+// PRO_CACHE_TTL_MS. A failed refresh keeps the last known answer (a paying
+// user stays Pro offline); with no answer yet, a failure means free.
 const PRO_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 // After a failed refresh, the next one waits this long.
 const PRO_RETRY_MS = 5 * 60 * 1000;
@@ -128,6 +128,37 @@ try {
   }
 } catch (e) {
   console.warn('CleanFeed: ExtensionPay onPaid listener failed:', e);
+}
+
+// ExtPay saves every user it fetches in storage `extensionpay_user` (sync, or
+// local where sync is unavailable): its payment polling, a resubscription,
+// another device. onPaid only fires when the saved user had no paidAt yet, so
+// a returning subscriber who pays again is only seen here.
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== 'sync' && areaName !== 'local') return;
+  const user = changes.extensionpay_user && changes.extensionpay_user.newValue;
+  const paid = user && user.paid;
+  if (typeof paid !== 'boolean') return;
+  readProCache().then(() => {
+    // A newer answer than any refresh in flight (writeProCache bumps the version)
+    if (!proCache || proCache.isPro !== paid) writeProCache({ isPro: paid, checkedAt: Date.now() });
+  });
+});
+
+// After a checkout, ExtPay's payment page sends 'extpay-fetch-user' and ExtPay
+// polls the user until it has a paidAt. A returning subscriber already has
+// one, so that poll stops at its first answer even when the payment is not
+// recorded yet. Until the cache says Pro, ask again after these delays.
+const PRO_CHECKOUT_RECHECK_MS = [15 * 1000, 60 * 1000, 3 * 60 * 1000];
+let proCheckoutRecheck = false; // rechecks are scheduled
+
+function recheckProAfterCheckout() {
+  if (proCheckoutRecheck) return;
+  proCheckoutRecheck = true;
+  PRO_CHECKOUT_RECHECK_MS.forEach((ms, i) => setTimeout(() => {
+    if (i === PRO_CHECKOUT_RECHECK_MS.length - 1) proCheckoutRecheck = false;
+    if (!(proCache && proCache.isPro)) refreshProStatus();
+  }, ms));
 }
 
 // Service worker start
@@ -335,7 +366,11 @@ async function strictModeRefusal(request) {
 // --- Message Handling ---
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (typeof request === 'string' && request.startsWith('extpay-')) return;
+  // ExtPay's own messages: its listener (startBackground) answers them
+  if (typeof request === 'string' && request.startsWith('extpay-')) {
+    if (request === 'extpay-fetch-user') recheckProAfterCheckout();
+    return;
+  }
 
   handleMessage(request).then(sendResponse).catch(err => {
     console.error('CleanFeed:', err);

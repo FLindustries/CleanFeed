@@ -12,6 +12,10 @@
 //     real numbers (adds 3, 2 of 3 slots left) with an Upgrade button. The
 //     same in Italian. A preset whose topics are all blocked already applies
 //     with no notice.
+//  4. A returning subscriber pays again: ExtPay saves extensionpay_user in
+//     chrome.storage.sync with paid true (it fires no onPaid, paidAt was set
+//     already). proStatusCache turns Pro and an open options.html shows PRO;
+//     saving paid false turns both back to free.
 // Prints a JSON report; exit 0 only if every scenario passes. YouTube is not
 // opened; the Upgrade button is never clicked.
 
@@ -141,6 +145,57 @@ async function presetScenario(language, expectedNotice, expectedPrice) {
   return r;
 }
 
+// Saves extensionpay_user in chrome.storage.sync, as ExtPay's fetch_user does.
+function saveExtPayUser(user) {
+  return h.getServiceWorker().then(sw => h.withTimeout(
+    sw.evaluate(async u => { await chrome.storage.sync.set({ extensionpay_user: u }); return true; }, user),
+    10000, 'save extensionpay_user'));
+}
+
+// Polls until check() is true (or the time runs out); returns its last value.
+async function waitFor(check, ms) {
+  const deadline = Date.now() + ms;
+  let value = await check();
+  while (!value && Date.now() < deadline) {
+    await h.sleep(250);
+    value = await check();
+  }
+  return value;
+}
+
+async function returningSubscriberScenario() {
+  const r = { name: 'returning subscriber: a saved paid ExtPay user turns Pro at once (no onPaid)', pass: false, reasons: [], steps: {} };
+  const lapsed = { paid: false, paidAt: '2026-01-05T10:00:00.000Z', installedAt: '2025-12-01T10:00:00.000Z', subscriptionStatus: 'canceled' };
+  await setLanguage('auto');
+  await saveExtPayUser(lapsed);
+  const { page, errors } = await openExtensionPage('options.html');
+  const badgeIsPro = () => h.evalInPage(page, () => document.getElementById('planBadge').classList.contains('badge-pro'));
+  const cacheIsPro = async () => ((await h.getStorage(['proStatusCache'])).proStatusCache || {}).isPro;
+  try {
+    r.steps.before = { cache: (await h.getStorage(['proStatusCache'])).proStatusCache, badgePro: await badgeIsPro() };
+    if (r.steps.before.cache?.isPro !== false || r.steps.before.badgePro) r.reasons.push('not free at the start: ' + JSON.stringify(r.steps.before));
+
+    await saveExtPayUser({ ...lapsed, paid: true, subscriptionStatus: 'active' });
+    const cachePro = await waitFor(async () => (await cacheIsPro()) === true, 5000);
+    const badgePro = await waitFor(badgeIsPro, 5000);
+    r.steps.paid = { cache: (await h.getStorage(['proStatusCache'])).proStatusCache, badge: await text(page, '#planBadge'), badgePro };
+    if (!cachePro) r.reasons.push('proStatusCache not Pro after the paid user was saved');
+    if (!badgePro) r.reasons.push('options.html badge not PRO');
+
+    await saveExtPayUser(lapsed);
+    const cacheFree = await waitFor(async () => (await cacheIsPro()) === false, 5000);
+    const badgeFree = await waitFor(async () => !(await badgeIsPro()), 5000);
+    r.steps.lapsedAgain = { cache: (await h.getStorage(['proStatusCache'])).proStatusCache, badge: await text(page, '#planBadge') };
+    if (!cacheFree) r.reasons.push('proStatusCache still Pro after paid false was saved');
+    if (!badgeFree) r.reasons.push('options.html badge still PRO');
+  } finally {
+    await page.close().catch(() => {});
+  }
+  if (errors.length) r.reasons.push('console/page errors: ' + errors.join(' | '));
+  r.pass = r.reasons.length === 0;
+  return r;
+}
+
 async function main() {
   const startedAt = Date.now();
   const cancelWatchdog = h.watchdog(180000);
@@ -152,7 +207,8 @@ async function main() {
       proCacheScenario,
       priceScenario,
       () => presetScenario('auto', NOTICE_EN, PRICE_EN),
-      () => presetScenario('it', NOTICE_IT, PRICE_IT)
+      () => presetScenario('it', NOTICE_IT, PRICE_IT),
+      returningSubscriberScenario
     ];
     for (const scenario of run) {
       try {

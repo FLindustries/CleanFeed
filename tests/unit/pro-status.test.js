@@ -10,6 +10,9 @@
 //   - handleMessage: ExtPay is asked on service worker start, when the cache is
 //     stale and on onPaid, never once per message; messages that don't need
 //     Pro status never wait for it.
+//   - ExtPay's saved user (storage `extensionpay_user`) updates the cache when
+//     its paid answer differs, which covers a returning subscriber (no onPaid);
+//     after a checkout message, Pro status is asked again until it says Pro.
 
 const assert = require('node:assert');
 const test = require('./registry');
@@ -281,6 +284,106 @@ test('onPaid during a refresh: the refresh answer sent before the payment does n
   await settle();
   assert.strictEqual(bg.proStatusCache().isPro, true);
   assert.strictEqual((await bg.handleMessage({ action: 'getFullState' })).isPro, true);
+});
+
+// --- ExtPay's stored user (extensionpay_user) ---
+// ExtPay fires onPaid only when the stored user has no paidAt yet, so a
+// returning subscriber (paid before, lapsed, pays again) never triggers it.
+// Every answer ExtPay fetches is saved in storage `extensionpay_user` (sync),
+// whoever asked for it (its payment polling, a resubscription, another device).
+
+const LAPSED = { paid: false, paidAt: '2026-01-05T10:00:00.000Z', installedAt: '2025-12-01T10:00:00.000Z' };
+
+test('a returning subscriber pays again (no onPaid): the saved ExtPay user makes them Pro at once', async () => {
+  const time = clock(T0);
+  const bg = loadBackground({ proStatusCache: { isPro: false, checkedAt: T0 - HOUR } },
+    { now: time.now, getUser: answers({ paid: false }), syncStorage: { extensionpay_user: LAPSED } });
+  await settle();
+  assert.strictEqual((await bg.handleMessage({ action: 'getFullState' })).isPro, false);
+  assert.ok((bg.listeners.storageOnChanged || []).length > 0, 'background listens to storage changes');
+
+  time.advance(MINUTE);
+  // ExtPay's payment polling saves the new answer; its paidAt was already set, so no onPaid
+  await bg.chrome.storage.sync.set({ extensionpay_user: { ...LAPSED, paid: true, subscriptionStatus: 'active' } });
+  await settle();
+  assert.deepStrictEqual(bg.proStatusCache(), { isPro: true, checkedAt: T0 + MINUTE });
+  assert.strictEqual((await bg.handleMessage({ action: 'getFullState' })).isPro, true);
+  assert.strictEqual(bg.getUserCalls(), 1, 'no extra network call needed');
+});
+
+test('the saved ExtPay user: an unchanged answer writes nothing, a lapsed subscription becomes free', async () => {
+  const time = clock(T0);
+  const bg = loadBackground({ proStatusCache: { isPro: true, checkedAt: T0 - HOUR } },
+    { now: time.now, getUser: answers({ paid: true }), syncStorage: { extensionpay_user: { ...LAPSED, paid: true } } });
+  await settle();
+  const before = bg.proWrites.length;
+
+  await bg.chrome.storage.sync.set({ extensionpay_user: { ...LAPSED, paid: true, subscriptionStatus: 'active' } });
+  await bg.chrome.storage.sync.set({ extensionpay_user: { installedAt: LAPSED.installedAt } }); // no boolean paid
+  await bg.chrome.storage.local.set({ extensionpay_user: { paid: 'yes' } });
+  await settle();
+  assert.strictEqual(bg.proWrites.length, before, 'same answer or no answer: no cache write');
+  assert.strictEqual((await bg.handleMessage({ action: 'getFullState' })).isPro, true);
+
+  time.advance(MINUTE);
+  await bg.chrome.storage.sync.set({ extensionpay_user: { ...LAPSED, paid: false, subscriptionStatus: 'canceled' } });
+  await settle();
+  assert.deepStrictEqual(bg.proStatusCache(), { isPro: false, checkedAt: T0 + MINUTE });
+  assert.strictEqual((await bg.handleMessage({ action: 'getFullState' })).isPro, false);
+});
+
+test('the saved ExtPay user during a refresh: the refresh answer sent before the payment does not overwrite it', async () => {
+  const time = clock(T0);
+  const inFlight = deferred();
+  const bg = loadBackground({}, { now: time.now, getUser: answers({ paid: false }, inFlight), syncStorage: { extensionpay_user: LAPSED } });
+  await settle();
+  time.advance(7 * HOUR);
+  assert.strictEqual((await bg.handleMessage({ action: 'getFullState' })).isPro, false); // starts a refresh
+  assert.strictEqual(bg.getUserCalls(), 2);
+
+  await bg.chrome.storage.sync.set({ extensionpay_user: { ...LAPSED, paid: true } });
+  inFlight.resolve({ paid: false }); // answered before the payment went through
+  await settle();
+  assert.strictEqual(bg.proStatusCache().isPro, true);
+  assert.strictEqual((await bg.handleMessage({ action: 'getFullState' })).isPro, true);
+});
+
+test('after the payment page reports a checkout, Pro status is asked again until it says Pro', async () => {
+  const timers = [];
+  const bg = loadBackground({ proStatusCache: { isPro: false, checkedAt: T0 - HOUR } }, {
+    now: () => T0,
+    // service worker start, then the payment is recorded late (webhook)
+    getUser: answers({ paid: false }, { paid: false }, { paid: true }),
+    setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
+    clearTimeout: () => {}
+  });
+  await settle();
+  assert.strictEqual(bg.getUserCalls(), 1);
+  const onMessage = bg.listeners.onMessage[0];
+  const responses = [];
+
+  assert.strictEqual(onMessage('extpay-trial-start', {}, r => responses.push(r)), undefined);
+  assert.strictEqual(timers.length, 0, 'only a checkout schedules rechecks');
+  // ExtPay's content script on its "paid" page sends this; ExtPay itself handles it too
+  assert.strictEqual(onMessage('extpay-fetch-user', {}, r => responses.push(r)), undefined, 'left to ExtPay: no response');
+  assert.strictEqual(onMessage('extpay-fetch-user', {}, r => responses.push(r)), undefined);
+  assert.ok(timers.length >= 2, 'rechecks scheduled, got ' + timers.length);
+  const scheduled = timers.length;
+  assert.ok(timers.every(t => t.ms > 0 && t.ms <= 5 * MINUTE), 'all within 5 minutes: ' + timers.map(t => t.ms));
+
+  timers[0].fn();
+  await settle();
+  assert.strictEqual(bg.getUserCalls(), 2, 'first recheck');
+  assert.strictEqual(bg.proStatusCache().isPro, false);
+  timers[1].fn();
+  await settle();
+  assert.strictEqual(bg.getUserCalls(), 3, 'second recheck');
+  assert.strictEqual(bg.proStatusCache().isPro, true, 'the late payment is seen');
+  for (const t of timers.slice(2)) t.fn();
+  await settle();
+  assert.strictEqual(bg.getUserCalls(), 3, 'Pro now: no more rechecks');
+  assert.strictEqual(timers.length, scheduled, 'a repeated checkout message did not schedule more');
+  assert.deepStrictEqual(responses, []);
 });
 
 test('Pro-only actions still use Pro status: whitelist and enabling Strict Mode', async () => {

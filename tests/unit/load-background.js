@@ -9,8 +9,13 @@
 //   bg.storage();      // host-realm copy of everything in chrome.storage.local
 //   bg.writes;         // keys of every chrome.storage.local.set() call, in order
 //   bg.Storage;        // the Storage object from storage.js
-//   bg.listeners;      // { onInstalled: [fn], onStartup: [fn], onAlarm: [fn], ... }
+//   bg.listeners;      // { onInstalled: [fn], onStartup: [fn], onAlarm: [fn], storageOnChanged: [fn], ... }
 //   bg.alarmCalls;     // every chrome.alarms call, in order: ['create' | 'clear' | 'get', name]
+//   bg.chrome;         // the stub chrome: bg.chrome.storage.sync.set({...}) writes like ExtPay
+//
+// chrome.storage.local and chrome.storage.sync (options.syncStorage: its
+// initial contents, where ExtPay keeps extensionpay_user) call the
+// storage.onChanged listeners after every set() that changes a value, like Chrome.
 //
 // features.js and storage.js run first, so background.js's importScripts() is a
 // no-op: the scripts share the context's global scope (like importScripts in
@@ -40,7 +45,9 @@ function clone(value) {
   return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
 }
 
-function fakeStorageArea(initial, writes, proWrites) {
+// `changed(changes, areaName)` runs after each set() that changed a value,
+// like chrome.storage.onChanged (unchanged keys are left out).
+function fakeStorageArea(areaName, initial, writes, proWrites, changed) {
   const data = clone(initial || {});
   return {
     data,
@@ -57,7 +64,14 @@ function fakeStorageArea(initial, writes, proWrites) {
       const keys = Object.keys(items).filter(key => key !== PRO_CACHE_KEY).sort();
       if (keys.length > 0) writes.push(keys);
       if (Object.prototype.hasOwnProperty.call(items, PRO_CACHE_KEY)) proWrites.push(clone(items[PRO_CACHE_KEY]));
-      for (const [key, value] of Object.entries(items)) data[key] = clone(value);
+      const changes = {};
+      for (const [key, value] of Object.entries(items)) {
+        const had = Object.prototype.hasOwnProperty.call(data, key);
+        if (had && JSON.stringify(data[key]) === JSON.stringify(value)) continue;
+        changes[key] = had ? { oldValue: clone(data[key]), newValue: clone(value) } : { newValue: clone(value) };
+        data[key] = clone(value);
+      }
+      if (Object.keys(changes).length > 0) changed(changes, areaName);
     }
   };
 }
@@ -67,15 +81,20 @@ function loadBackground(initialStorage, options) {
   const isPro = !!opts.isPro;
   const writes = [];
   const proWrites = [];
-  const local = fakeStorageArea(initialStorage, writes, proWrites);
   const listeners = {};
   const listener = name => ({ addListener(fn) { (listeners[name] = listeners[name] || []).push(fn); } });
+  const storageChanged = (changes, areaName) => {
+    for (const fn of listeners.storageOnChanged || []) fn(clone(changes), areaName);
+  };
+  const local = fakeStorageArea('local', initialStorage, writes, proWrites, storageChanged);
+  // ExtPay's own storage (it saves extensionpay_* in sync); kept out of `writes`
+  const sync = fakeStorageArea('sync', opts.syncStorage, [], [], storageChanged);
   const alarmCalls = [];
   const paidListeners = [];
   let getUserCalls = 0;
   const getUser = opts.getUser || (async () => ({ paid: isPro }));
   const chrome = {
-    storage: { local },
+    storage: { local, sync, onChanged: listener('storageOnChanged') },
     runtime: {
       onInstalled: listener('onInstalled'),
       onStartup: listener('onStartup'),
@@ -133,6 +152,7 @@ function loadBackground(initialStorage, options) {
     writes,
     listeners,
     alarmCalls,
+    chrome,
     sandbox
   };
 }
