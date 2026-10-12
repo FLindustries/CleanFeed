@@ -80,12 +80,14 @@ chrome.runtime.onStartup.addListener(() => {
 // Settings that hide content; turning one off weakens filtering.
 const STRICT_HIDE_SETTINGS = ['hideShorts', 'hideComments', 'hideSubsRelevant'];
 
-// Actions isWeakeningAction can call weakening (the guard skips the others).
+// Actions isWeakeningAction can call weakening, which strictModeRefusal
+// checks (the others skip it). disableStrictMode is weakening too, but its
+// handler checks its own `password`.
 const STRICT_GUARDED_ACTIONS = new Set([
   'removeBlockedChannel', 'clearAllBlockedChannels', 'removeKeyword',
   'untagChannelForCategory', 'clearCategoryData', 'replaceCategoryTags',
   'toggleSynonym', 'removeCustomSynonym', 'whitelistChannel', 'updateSetting',
-  'importAllData', 'setStrictPassword', 'disableStrictMode'
+  'importAllData', 'setStrictPassword'
 ]);
 
 // Storage the weakening checks compare a request against.
@@ -210,9 +212,8 @@ async function strictPasswordMatches(settings, password) {
 
 // Returns { error: 'strict_locked' } when strict mode is on and `request`
 // weakens filtering without the right `strictPassword`, else null.
-// disableStrictMode checks its own `password` in its handler.
 async function strictModeRefusal(request) {
-  if (!request || !STRICT_GUARDED_ACTIONS.has(request.action) || request.action === 'disableStrictMode') return null;
+  if (!request || !STRICT_GUARDED_ACTIONS.has(request.action)) return null;
   const current = await chrome.storage.local.get(STRICT_STATE_KEYS);
   const settings = current.settings || Storage.DEFAULTS.settings;
   if (!settings.strictModeEnabled) return null;
