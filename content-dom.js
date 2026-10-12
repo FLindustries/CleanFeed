@@ -285,25 +285,84 @@ function cfCreatePlansLoader(getMessage, onCards, options) {
   return { load, cards: () => cards };
 }
 
+// Words of YouTube's view, subscriber and live-viewer counts in Latin-script
+// UI languages (lowercase, no trailing dot): "views", "visualizzazioni",
+// "iscritti", "Aufrufe", ... Other scripts: see isValidChannelName.
+const CF_COUNT_WORDS = new Set([
+  'view', 'views', 'subscriber', 'subscribers', 'watching', 'waiting',
+  'visualizzazione', 'visualizzazioni', 'iscritto', 'iscritti', 'spettatore', 'spettatori', 'attesa',
+  'visualización', 'visualizaciones', 'vistas', 'visitas', 'suscriptor', 'suscriptores',
+  'visualização', 'visualizações', 'inscrito', 'inscritos',
+  'vue', 'vues', 'abonné', 'abonnés', 'aufruf', 'aufrufe', 'abonnent', 'abonnenten',
+  'weergave', 'weergaven', 'abonnee', 'abonnees',
+  'wyświetlenie', 'wyświetlenia', 'wyświetleń', 'subskrybent', 'subskrybenci', 'subskrybentów',
+  'görüntüleme', 'abone', 'ditonton', 'tontonan', 'pelanggan', 'xem', 'panonood',
+  'zhlédnutí', 'zhliadnutí', 'odběratelů', 'megtekintés', 'feliratkozó', 'vizionări', 'abonați',
+  'visningar', 'prenumeranter', 'visninger', 'avspillinger', 'abonnenter', 'katselukertaa', 'tilaajaa', 'pregleda',
+]);
+
+// Magnitudes and connectors that sit next to a count ("6.8M", "1,2 Mln di",
+// "1,2 Mio.", "1,2 jt x", "No views"), never a count on their own.
+const CF_COUNT_FILLERS = new Set([
+  'k', 'm', 'b', 'e', 'j', 't', 'n', 'tr', 'tn', 'mn', 'md', 'mld', 'mln', 'mrd', 'mio', 'mi', 'mil', 'mila', 'mille',
+  'mill', 'milj', 'tsd', 'tys', 'tis', 'jt', 'rb', 'tūkst', 'tuh', 'thousand', 'million', 'millions', 'billion',
+  'milione', 'milioni', 'miliardo', 'miliardi', 'millón', 'millones', 'milhão', 'milhões',
+  'no', 'nessuna', 'di', 'de', 'in', 'x', 'lượt', 'người', 'đăng', 'ký',
+]);
+
+// True for a view / subscriber count: numbers ("6.8M", "1 234 567"), count
+// words, their magnitudes and connectors, nothing else ("4K Media" and
+// "1MILLIONTHINGS" are names).
+function cfIsCountText(text) {
+  let counts = false;
+  for (const token of String(text).toLowerCase().split(/[\s•·:]+/u)) {
+    if (!token) continue;
+    // a number, maybe glued to its magnitude ("6.8m")
+    const m = /^(\p{Nd}+(?:[.,]\p{Nd}+)*)(.*)$/u.exec(token);
+    if (m) counts = true;
+    const word = (m ? m[2] : token).replace(/\.$/, '');
+    if (!word) continue;
+    if (CF_COUNT_WORDS.has(word)) counts = true;
+    else if (!CF_COUNT_FILLERS.has(word)) return false;
+  }
+  return counts;
+}
+
+// True for a relative date in a Latin-script UI language ("3 days ago", "3d
+// ago", "2 giorni fa", "vor 2 Tagen", "il y a 2 jours"). Apart from a final
+// "ago" / "fa" (lowercase, as YouTube writes them: "The FA" is a name), a
+// date needs a digit, so a name like "Vor Ort" stays a name.
+function cfIsRelativeDate(text) {
+  const t = String(text).trim();
+  if (/(?:^|[^\p{L}])(?:ago|fa)$/u.test(t)) return true;
+  if (!/\p{Nd}/u.test(t)) return false;
+  return /(?:^|[^\p{L}])(?:geleden|temu|önce|lalu|trước|sedan|siden|sitten|tagasi|nakalipas)$/iu.test(t) ||
+    /^(?:hace|vor|il y a|há|před|pred|prije|acum|prieš|pirms)\s/iu.test(t);
+}
+
 // Validates a string as a plausible channel name. YouTube's metadata spans
-// can contain separators ("•", "·"), view counts ("1 Mln di visualizzazioni"),
-// dates ("3 giorni fa"), or the channel's own dot — none of which are real
-// channel names. Without this filter, getChannelName() returned garbage like
-// "•" which then got auto-tagged for keyword categories and silently blocked
-// the entire YouTube grid.
+// can contain separators ("•", "·"), view counts ("1 Mln di visualizzazioni",
+// or just "6.8M" on a channel's Videos tab), dates ("3 giorni fa", "3d ago"),
+// or the channel's own dot — none of which are real channel names. Without
+// this filter, getChannelName() returned garbage like "•" which then got
+// auto-tagged for keyword categories and silently blocked the entire YouTube
+// grid, and the 3-dot menu offered to block a channel named "6.8M".
 function isValidChannelName(text) {
   if (!text) return false;
-  const t = text.trim();
+  const t = String(text).trim();
   if (t.length < 2 || t.length > 60) return false;
-  // Need at least one Latin letter (excludes pure separators "•", "·", "-")
-  if (!/[a-zA-ZÀ-ſ]/.test(t)) return false;
-  // Reject view counts — multilingual
-  if (/\b(views?|visualizz|visitas|vues|aufrufe|просмотр)/i.test(t)) return false;
-  if (/^\d+[\s ]*[KMB]\b/i.test(t)) return false; // "1.5K", "2M"
-  if (/\b(mln|mila|miliard|migl)\b/i.test(t)) return false; // Italian short forms
-  // Reject date strings
-  if (/\b\d+\s*(hour|day|week|month|year|sec|min|or[ea]|giorn|settiman|mes|anno|anni|fa)\b/i.test(t)) return false;
-  if (/\b(ago|fa)$/i.test(t)) return false;
+  // Needs a letter of any script: excludes separators ("•", "·", "-") and pure numbers
+  if (!/\p{L}/u.test(t)) return false;
+  // Names in any script pass ("東海オンエア", "Тинькофф Журнал"), but other
+  // scripts write counts and dates with words not listed above ("680万回視聴",
+  // "6,8 εκ. προβολές", "3 日前", "۶٫۸ میلیون"): a text with a digit and no
+  // Latin letter is never a name. A lone K / M / B magnitude ("6.8M צפיות")
+  // does not count as Latin; "U2" and "B1A4" do. That loses a few names
+  // ("Россия 24"); before v1.4 every text without a Latin letter was rejected.
+  if (/\p{Nd}/u.test(t) &&
+      !/\p{Script=Latin}/u.test(t.replace(/(^|[\s\p{Nd}])[kmb](?![\p{L}\p{N}])/giu, '$1'))) return false;
+  if (cfIsCountText(t)) return false;
+  if (cfIsRelativeDate(t)) return false;
   return true;
 }
 
@@ -644,6 +703,25 @@ function getMenuInjectionAction(itemTokens, clickToken, clickAgeMs) {
   const fresh = !!clickToken && clickAgeMs >= 0 && clickAgeMs <= MENU_CLICK_WINDOW_MS;
   if (fresh) return hasItems ? 'replace' : 'inject';
   return hasItems ? 'clear' : 'none';
+}
+
+// The channel that the 3-dot menu's "Block channel" item blocks for `card`:
+// { name, id } (id as getChannelId / getPageChannelId give it, or null), or
+// null when no real channel name is known (then no block item is added).
+// The card's own name when valid; else, on a channel page, that page's
+// channel: a channel's Videos and Shorts tabs show no channel on their cards,
+// only "6.8M" and "3d ago" (observed 2026-10-12). A nameless card that links
+// another channel's handle never gets the page's channel.
+function cfMenuBlockChannel(card) {
+  const name = YT.getChannelName(card);
+  const cardId = YT.getChannelId(card);
+  if (isValidChannelName(name)) return { name: name.trim(), id: cardId };
+  if (!YT.isChannelPage()) return null;
+  const pageName = YT.getPageChannelName();
+  if (!isValidChannelName(pageName)) return null;
+  const pageId = YT.getPageChannelId();
+  if (cardId && cfChannelHandle(cardId) !== cfChannelHandle(pageId)) return null;
+  return { name: pageName.trim(), id: pageId };
 }
 
 // --- Keyword Matching ---

@@ -1656,8 +1656,9 @@
     if (items.length < 2) return;
 
     const videoCard = lastClickedVideoCard;
-    const channelName = YT.getChannelName(videoCard);
-    const channelId = YT.getChannelId(videoCard);
+    // { name, id } of the channel to block, or null: never a view count or a
+    // date ("6.8M" on a channel's Videos tab blocks that page's channel)
+    const blockTarget = cfMenuBlockChannel(videoCard);
     const videoTitle = YT.getVideoTitle(videoCard);
     const detectedCategory = detectTopicFromTitle(videoTitle);
 
@@ -1697,16 +1698,16 @@
     // Separator
     insertItem(cfEl('div', { className: 'cleanfeed-menu-separator' }));
 
-    // Block channel item (only if channel name is available)
-    if (channelName) {
+    // Block channel item (only if a real channel name is available)
+    if (blockTarget) {
       insertItem(cfEl(
         'div',
         {
           className: 'cleanfeed-menu-item',
           role: 'menuitem',
           tabindex: '0',
-          'data-cf-channel': channelName,
-          onClick: () => handleBlockClick(channelName, channelId),
+          'data-cf-channel': blockTarget.name,
+          onClick: () => handleBlockClick(blockTarget.name, blockTarget.id),
         },
         [
           cfLogo(),

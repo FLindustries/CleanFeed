@@ -16,6 +16,11 @@
 // answers within 3 s, repeatedly over ~5 s); hold exactly one set of CleanFeed
 // items (2 separators, 1 topic item, at most 1 block item); not remove/re-add
 // them while the menu stays open. The topic panel must name card 2's video.
+// The block item's channel (data-cf-channel) must be a real channel name, never
+// a view count or a date: on a channel's Videos tab the cards show only "6.8M"
+// and "3d ago", and the item used to block a channel named "6.8M". On the
+// channel tabs (cards without a channel name) it must name the page's channel
+// (YT.getPageChannelName(), "Marques Brownlee" on @mkbhd).
 // Each scenario runs in a fresh browser on real logged-out YouTube. Prints a
 // JSON report; exit 0 only if every scenario passes.
 // Never signs in; on consent pages only "Reject all" is clicked.
@@ -23,11 +28,15 @@
 const h = require('./harness');
 
 const SEARCH_URL = 'https://www.youtube.com/results?search_query=mkbhd';
+// pageChannel: the block item must name the page's channel (cards show none)
 const CARD_SCENARIOS = [
-  { name: 'channel page: Videos tab', url: 'https://www.youtube.com/@mkbhd/videos' },
-  { name: 'channel page: Shorts tab (no channel name on cards)', url: 'https://www.youtube.com/@mkbhd/shorts' },
+  { name: 'channel page: Videos tab', url: 'https://www.youtube.com/@mkbhd/videos', pageChannel: true },
+  { name: 'channel page: Shorts tab (no channel name on cards)', url: 'https://www.youtube.com/@mkbhd/shorts', pageChannel: true },
   { name: 'search results', url: SEARCH_URL }
 ];
+// Independent of CleanFeed's own isValidChannelName: what a count or a
+// relative date looks like in the English UI the tests get.
+const COUNT_OR_DATE_RE = /^\s*[\d.,\s]+[KMB]?\s*$|\b(views?|subscribers?|watching|ago)\b/i;
 const PROBE_TIMEOUT_MS = 3000;
 const PROBE_WINDOW_MS = 5000;
 const MENU_BUTTON_RE_SOURCE = '^(more actions|action menu)$';
@@ -241,6 +250,26 @@ async function openAndCheck(page, expect) {
   return out;
 }
 
+// Checks the channel named by the open menu's block item(s). `cs` is the
+// CleanFeed content-script world. Returns { blockChannel, pageChannel, reasons }.
+async function checkBlockChannel(cs, popup, expectPageChannel) {
+  const names = (popup && popup.blockChannel) || [];
+  const out = { blockChannel: names, pageChannel: null, reasons: [] };
+  for (const name of names) {
+    if (COUNT_OR_DATE_RE.test(name)) out.reasons.push(`the block item names a count or a date: "${name}"`);
+    else if (!(await cs.evaluate(`isValidChannelName(${JSON.stringify(name)})`))) {
+      out.reasons.push(`the block item names an invalid channel: "${name}"`);
+    }
+  }
+  if (expectPageChannel) {
+    out.pageChannel = await cs.evaluate('YT.isChannelPage() ? YT.getPageChannelName() : null');
+    if (!out.pageChannel) out.reasons.push('no page channel on a channel page');
+    else if (names.length !== 1) out.reasons.push(`expected a block item for the page channel "${out.pageChannel}", found ${names.length}`);
+    else if (names[0] !== out.pageChannel) out.reasons.push(`the block item names "${names[0]}", the page channel is "${out.pageChannel}"`);
+  }
+  return out;
+}
+
 async function closeMenu(page) {
   await h.withTimeout(page.keyboard.press('Escape'), 3000, 'press Escape');
   await h.sleep(800);
@@ -266,7 +295,7 @@ async function checkTopicPanel(page, expectedTitle) {
 
 // ── Scenarios ────────────────────────────────────────────────────────────
 
-async function cardMenuScenario(name, url) {
+async function cardMenuScenario({ name, url, pageChannel }) {
   const result = { name, url, pass: false, reasons: [] };
   try {
     await h.launch();
@@ -274,6 +303,7 @@ async function cardMenuScenario(name, url) {
     const nav = await h.gotoYouTube(page, url);
     result.url = nav.url;
     await h.waitForFilter(page, { settleMs: 3000 });
+    const cs = await h.attachContentWorld(page);
 
     for (const index of [0, 1]) {
       const label = `card ${index + 1}`;
@@ -285,6 +315,11 @@ async function cardMenuScenario(name, url) {
       result[label] = check;
       result.reasons.push(...check.reasons.map(r => `${label}: ${r}`));
       if (!check.responsive) throw new Error(`${label}: tab frozen`);
+      if (check.popups.length === 1) {
+        const channel = await checkBlockChannel(cs, check.popups[0], pageChannel);
+        check.pageChannel = channel.pageChannel;
+        result.reasons.push(...channel.reasons.map(r => `${label}: ${r}`));
+      }
       if (index === 0) await closeMenu(page);
     }
 
@@ -348,7 +383,7 @@ async function main() {
   const startedAt = Date.now();
   const cancelWatchdog = h.watchdog(420000);
   const scenarios = [];
-  for (const s of CARD_SCENARIOS) scenarios.push(await cardMenuScenario(s.name, s.url));
+  for (const s of CARD_SCENARIOS) scenarios.push(await cardMenuScenario(s));
   scenarios.push(await shortsShelfScenario());
   cancelWatchdog();
 
