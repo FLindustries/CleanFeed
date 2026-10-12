@@ -158,5 +158,8 @@
   "quickAddTitle": { "message": "Aggiungi parole da questo titolo alla blocklist" },
   "quickAddPopoverTitle": { "message": "Scegli parole da bloccare" },
   "quickAddAs": { "message": "Aggiungi come:" },
-  "quickAddSubmit": { "message": "Aggiungi selezionate" }
+  "quickAddSubmit": { "message": "Aggiungi selezionate" },
+  "autoTaggedChannelsTitle": { "message": "Canali etichettati in automatico per questo argomento" },
+  "autoTaggedChannelsDesc": { "message": "Tutti i video di questi canali sono nascosti perché diversi loro video corrispondevano a questo argomento. Togli l'etichetta a un canale per rivedere i suoi altri video. Non verrà più etichettato in automatico per questo argomento." },
+  "untagChannelBtn": { "message": "Togli etichetta" }
 }

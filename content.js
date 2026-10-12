@@ -15,13 +15,17 @@
   let savedInterestQueries = []; // active interests from storage (Today/Always)
   let currentSettings = {};
   let isPro = false;
-  // Channels that have been auto-tagged for a blocked category because too
+  // Channels that have been auto-tagged for a blocked topic because too
   // many of their videos already matched. Shape: Map<categoryLower, Set<channelLower>>
   let categoryTagsLocal = new Map();
   // Pending category hits — flushed in a batch via background to reduce IPC.
-  // Shape: Map<`${category}::${channelLower}`, count>
+  // Shape: Map<`${category}::${channelLower}`, Set<videoKey>>
   const pendingCategoryHits = new Map();
   let categoryHitFlushTimer = null;
+  // Videos already counted toward auto-tagging in this tab
+  // (`${category}::${channelLower}\n${videoKey}`). Every full refilter
+  // evaluates the same cards again; each video must count only once.
+  const countedCategoryVideos = new Set();
   // Page-scoped overrides (all reset on yt-navigate-finish):
   //   isPagePaused  — floating toggle: disable ALL filtering on this page
   //   peekedChannels — handles (lowercase, with @) the user wants to see
@@ -383,18 +387,25 @@
     // ALSO: filter out garbage channel names that may have leaked into storage
     // BEFORE the channel-name validation was added. Without this, an existing
     // "•" or view-count entry keeps blocking videos sitewide.
+    // Only topics auto-tag: tags stored for a plain keyword by older versions
+    // stay in storage but are ignored. Channels the user untagged are ignored
+    // too, even if a tag for them comes back (e.g. from an imported backup).
     categoryTagsLocal = new Map();
     const tagMap = state.categoryTags || {};
+    const exclusions = state.categoryTagExclusions || {};
     let needsCleanup = false;
     const cleanedTags = {};
     for (const [cat, channels] of Object.entries(tagMap)) {
       if (!Array.isArray(channels)) continue;
       const validChannels = channels.filter(c => isValidChannelName(c));
       if (validChannels.length !== channels.length) needsCleanup = true;
-      if (validChannels.length > 0) {
-        cleanedTags[cat] = validChannels;
-        categoryTagsLocal.set(cat.toLowerCase(), new Set(validChannels.map(c => c.toLowerCase())));
-      }
+      if (validChannels.length === 0) continue;
+      cleanedTags[cat] = validChannels;
+      const catLower = cat.toLowerCase();
+      if (!cfIsTopicKeyword(catLower)) continue;
+      const excluded = Array.isArray(exclusions[catLower]) ? exclusions[catLower] : [];
+      const active = validChannels.map(c => c.toLowerCase()).filter(c => !excluded.includes(c));
+      if (active.length > 0) categoryTagsLocal.set(catLower, new Set(active));
     }
     if (needsCleanup) {
       console.log('%cCleanFeed: removed garbage entries from categoryTags', 'color:#ffa500;font-weight:bold;');
@@ -408,7 +419,8 @@
 
   function isChannelTaggedForBlocked(channelLower) {
     if (!channelLower) return null;
-    // Returns the matching blocked keyword (category) if channel is tagged, else null
+    // Returns the matching blocked keyword (category) if channel is tagged, else null.
+    // categoryTagsLocal holds topics only, so a plain keyword never matches here.
     for (const kw of blockedKeywords) {
       const cat = kw.keyword.toLowerCase();
       const tagged = categoryTagsLocal.get(cat);
@@ -417,15 +429,28 @@
     return null;
   }
 
-  function queueCategoryHit(category, channelName) {
-    if (!category || !channelName) return;
-    // Refuse garbage channel names ("•", view counts, dates). Without this
-    // guard, YouTube's metadata layout occasionally exposes a bullet or view
-    // count where the channel name should be — that garbage then accumulated
-    // 3+ hits and got auto-tagged, blocking unrelated videos site-wide.
-    if (!isValidChannelName(channelName)) return;
-    const key = category.toLowerCase() + '::' + channelName.toLowerCase();
-    pendingCategoryHits.set(key, (pendingCategoryHits.get(key) || 0) + 1);
+  // Counts `card`, hidden for matching `keyword`, toward auto-tagging its
+  // channel. Only a topic counts (cfCategoryHitKey refuses plain keywords and
+  // garbage channel names), and each video counts once per topic and channel:
+  // here for this tab, and in the background across page loads.
+  function queueCategoryHit(keyword, channelName, card, title) {
+    const key = cfCategoryHitKey(keyword, channelName);
+    if (!key) return;
+    // An outer wrapper (Home's ytd-rich-item-renderer) holds the video's own
+    // card, which is evaluated and counted by itself.
+    if (card.querySelector(YT.VIDEO_CARDS)) return;
+    const videoKey = cfCategoryVideoKey(YT.getVideoId(card), title);
+    if (!videoKey) return;
+    const countedKey = key + '\n' + videoKey;
+    if (countedCategoryVideos.has(countedKey)) return;
+    if (countedCategoryVideos.size >= 5000) countedCategoryVideos.clear();
+    countedCategoryVideos.add(countedKey);
+    let videoKeys = pendingCategoryHits.get(key);
+    if (!videoKeys) {
+      videoKeys = new Set();
+      pendingCategoryHits.set(key, videoKeys);
+    }
+    videoKeys.add(videoKey);
     if (!categoryHitFlushTimer) {
       // Flush slowly to coalesce; the data is for the NEXT page load mostly.
       categoryHitFlushTimer = setTimeout(flushCategoryHits, 2000);
@@ -435,7 +460,7 @@
   function flushCategoryHits() {
     categoryHitFlushTimer = null;
     if (pendingCategoryHits.size === 0) return;
-    const batch = Array.from(pendingCategoryHits.entries());
+    const batch = Array.from(pendingCategoryHits, ([key, videoKeys]) => [key, [...videoKeys]]);
     pendingCategoryHits.clear();
     sendMsg({ action: 'batchIncrementCategoryHits', hits: batch });
   }
@@ -519,9 +544,10 @@
     const keys = Object.keys(changes || {});
     const statsOnly = keys.length === 1 && keys[0] === 'stats';
     if (statsOnly) return;
-    // Also skip pure auto-tag hit increments (no functional state change unless
-    // a NEW tag was added, which we'll catch on the categoryTags key)
-    const hitsOnly = keys.length === 1 && keys[0] === 'categoryHits';
+    // Also skip pure auto-tag bookkeeping (hit counts, counted videos): no
+    // functional state change unless a NEW tag was added, which we'll catch on
+    // the categoryTags key
+    const hitsOnly = keys.length > 0 && keys.every(k => k === 'categoryHits' || k === 'categoryHitVideos');
     if (hitsOnly) return;
 
     const state = await sendMsg({ action: 'getFullState' });
@@ -739,8 +765,8 @@
 
           card.classList.add('cleanfeed-hidden');
           logHidden(card, 'keyword', kw.keyword);
-          // Channel hit for future auto-tagging
-          if (channelName) queueCategoryHit(kw.keyword, channelName);
+          // Channel hit for future auto-tagging (topics only)
+          if (channelName) queueCategoryHit(kw.keyword, channelName, card, title);
           break;
         }
       }
@@ -1022,7 +1048,7 @@
           for (const term of expandedTerms) {
             if (matchesKeyword(title, term)) {
               container.classList.add('cleanfeed-hidden');
-              if (channelName) queueCategoryHit(kw.keyword, channelName);
+              if (channelName) queueCategoryHit(kw.keyword, channelName, container, title);
               break;
             }
           }

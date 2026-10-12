@@ -126,41 +126,12 @@ async function handleMessage(request) {
     }
 
     // --- Category Auto-Tag ---
-    // Body: hits = [["category::channelLower", count], ...]
-    // Previously this looped `count` times calling Storage.incrementCategoryHit
-    // → that did one storage read + write PER hit. With dozens of hidden videos
-    // across multiple channels it became 100+ storage operations which Chrome's
-    // service worker timed out on, leaving an "Unhandled case: [object Object]"
-    // in the extension error log. Now: single read, batched mutation, single write.
+    // Body: hits = [["category::channelLower", [videoKey, ...]], ...]
+    // One storage read and one write for the whole batch: a read + write per
+    // hit timed out the service worker. Storage.recordCategoryHits counts each
+    // video once and never re-tags a channel the user untagged.
     case 'batchIncrementCategoryHits': {
-      const inputHits = Array.isArray(request.hits) ? request.hits : [];
-      if (inputHits.length === 0) return { success: true, newlyTagged: [] };
-
-      const allHits = await Storage.getCategoryHits();
-      const allTags = await Storage.getCategoryTags();
-      const newlyTagged = [];
-
-      for (const [key, count] of inputHits) {
-        if (typeof key !== 'string') continue;
-        const idx = key.indexOf('::');
-        if (idx < 0) continue;
-        const cat = key.slice(0, idx).trim();
-        const ch = key.slice(idx + 2).trim();
-        if (!cat || !ch || !count || count <= 0) continue;
-
-        if (!allHits[cat]) allHits[cat] = {};
-        allHits[cat][ch] = (allHits[cat][ch] || 0) + count;
-
-        if (allHits[cat][ch] >= Storage.CATEGORY_TAG_THRESHOLD) {
-          if (!allTags[cat]) allTags[cat] = [];
-          if (!allTags[cat].includes(ch)) {
-            allTags[cat].push(ch);
-            newlyTagged.push({ category: cat, channel: ch });
-          }
-        }
-      }
-
-      await chrome.storage.local.set({ categoryHits: allHits, categoryTags: allTags });
+      const newlyTagged = await Storage.recordCategoryHits(request.hits);
       return { success: true, newlyTagged };
     }
 
@@ -372,6 +343,7 @@ async function handleMessage(request) {
       const disabledSynonyms = await Storage.getDisabledSynonyms();
       const customSynonyms = await Storage.getCustomSynonyms();
       const categoryTags = await Storage.getCategoryTags();
+      const categoryTagExclusions = await Storage.getCategoryTagExclusions();
       const interests = await Storage.getInterests();
       const hiddenVideos = await Storage.getHiddenVideos();
       const onboarding = await Storage.getOnboarding();
@@ -379,7 +351,7 @@ async function handleMessage(request) {
       return {
         settings, stats, blockedChannels, blockedKeywords,
         whitelistedChannels, disabledSynonyms, customSynonyms,
-        categoryTags, interests, hiddenVideos, onboarding, isPro
+        categoryTags, categoryTagExclusions, interests, hiddenVideos, onboarding, isPro
       };
     }
 
@@ -432,11 +404,12 @@ async function handleMessage(request) {
       const interests = await Storage.getInterests();
       const settings = await Storage.getSettings();
       const categoryTags = await Storage.getCategoryTags();
+      const categoryTagExclusions = await Storage.getCategoryTagExclusions();
       return {
         cleanfeedVersion: chrome.runtime.getManifest().version,
         exportedAt: Date.now(),
         blockedChannels, blockedKeywords, customSynonyms, disabledSynonyms,
-        whitelistedChannels, interests, settings, categoryTags
+        whitelistedChannels, interests, settings, categoryTags, categoryTagExclusions
       };
     }
 
@@ -457,6 +430,9 @@ async function handleMessage(request) {
         updates.settings = { ...cur, ...data.settings };
       }
       if (data.categoryTags && typeof data.categoryTags === 'object') updates.categoryTags = data.categoryTags;
+      if (data.categoryTagExclusions && typeof data.categoryTagExclusions === 'object' && !Array.isArray(data.categoryTagExclusions)) {
+        updates.categoryTagExclusions = data.categoryTagExclusions;
+      }
       await chrome.storage.local.set(updates);
       return { success: true, imported: Object.keys(updates) };
     }

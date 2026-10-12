@@ -938,6 +938,8 @@ function renderCategories() {
 
     synonymPanel.appendChild(synonymList);
     synonymPanel.appendChild(addRow);
+    const autoTagList = renderAutoTaggedChannels(cat.key, isActive);
+    if (autoTagList) synonymPanel.appendChild(autoTagList);
     item.appendChild(synonymPanel);
 
     // Restore open state from previous render
@@ -958,6 +960,59 @@ function renderCategories() {
 
     container.appendChild(item);
   }
+}
+
+// Channels auto-tagged for a blocked topic (all their videos are hidden), each
+// with an Untag button. Untag records an exclusion in the background, so the
+// channel is never auto-tagged for this topic again. Returns null when there
+// is nothing to show.
+function renderAutoTaggedChannels(categoryKey, isActive) {
+  if (!isActive) return null;
+  const tagged = (state.categoryTags || {})[categoryKey];
+  const excludedList = (state.categoryTagExclusions || {})[categoryKey];
+  const excluded = new Set(Array.isArray(excludedList) ? excludedList : []);
+  const channels = Array.isArray(tagged)
+    ? tagged.filter(ch => typeof ch === 'string' && ch && !excluded.has(ch))
+    : [];
+  if (channels.length === 0) return null;
+
+  const section = document.createElement('div');
+  section.className = 'autotag-list';
+
+  const title = document.createElement('div');
+  title.className = 'autotag-list-title';
+  title.textContent = msg('autoTaggedChannelsTitle');
+  section.appendChild(title);
+
+  const desc = document.createElement('div');
+  desc.className = 'autotag-list-desc';
+  desc.textContent = msg('autoTaggedChannelsDesc');
+  section.appendChild(desc);
+
+  for (const ch of channels) {
+    const row = document.createElement('div');
+    row.className = 'list-item';
+
+    const name = document.createElement('span');
+    name.className = 'list-item-name';
+    name.textContent = ch;
+    row.appendChild(name);
+
+    const untagBtn = document.createElement('button');
+    untagBtn.className = 'list-item-undo';
+    untagBtn.textContent = msg('untagChannelBtn');
+    untagBtn.addEventListener('click', async () => {
+      untagBtn.disabled = true;
+      await chrome.runtime.sendMessage({ action: 'untagChannelForCategory', category: categoryKey, channelName: ch });
+      notifyContentScript();
+      await loadState();
+      renderCategories();
+    });
+    row.appendChild(untagBtn);
+
+    section.appendChild(row);
+  }
+  return section;
 }
 
 // ── Custom Keywords ──

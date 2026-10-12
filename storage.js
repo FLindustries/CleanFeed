@@ -10,6 +10,8 @@ const Storage = {
     customSynonyms: {},      // user-added synonyms per category: {gaming: ["resident evil"]}
     categoryHits: {},        // per-category per-channel block counts: {gaming: {"every eye": 5}}
     categoryTags: {},        // channels auto-tagged for a category once hits >= threshold: {gaming: ["every eye"]}
+    categoryHitVideos: {},   // videos already counted per category per channel, newest last: {gaming: {"every eye": ["dQw4w9WgXcQ"]}}
+    categoryTagExclusions: {}, // channels the user untagged, never auto-tagged for that category again: {gaming: ["every eye"]}
     interests: {},
     hiddenVideos: [],
     settings: {
@@ -46,6 +48,9 @@ const Storage = {
   // contain any keyword/synonym. Catches the "Gaussian Splatting on a gaming
   // channel" case where the title gives no signal.
   CATEGORY_TAG_THRESHOLD: 3,
+  // Counted videos remembered per category per channel, so revisiting a video
+  // on a later page load doesn't count it again.
+  CATEGORY_HIT_VIDEOS_MAX: 20,
 
   async init() {
     const data = await chrome.storage.local.get(null);
@@ -184,60 +189,124 @@ const Storage = {
     return categoryTags || {};
   },
 
-  // Records that a video from `channelName` was hidden under `category`.
-  // Returns { tagged: true } the moment the channel crosses the threshold so
-  // the caller can refilter and surface the change.
-  async incrementCategoryHit(category, channelName) {
-    if (!category || !channelName) return { tagged: false };
-    const lower = channelName.toLowerCase().trim();
-    if (!lower) return { tagged: false };
+  async getCategoryHitVideos() {
+    const { categoryHitVideos } = await chrome.storage.local.get('categoryHitVideos');
+    return categoryHitVideos || {};
+  },
+
+  async getCategoryTagExclusions() {
+    const { categoryTagExclusions } = await chrome.storage.local.get('categoryTagExclusions');
+    return categoryTagExclusions || {};
+  },
+
+  // Records videos hidden for a topic. `entries`: [["category::channelLower",
+  // [videoKey, ...]], ...] (videoKey: a video id, or "t:" + title).
+  // Each video counts once per category and channel, also across page loads
+  // (the newest CATEGORY_HIT_VIDEOS_MAX keys are kept), and the hit count is
+  // the number of distinct videos counted. A channel is tagged once it reaches
+  // CATEGORY_TAG_THRESHOLD, unless the user untagged it for that category.
+  // One read and one write for the whole batch. Returns the newly tagged
+  // channels: [{ category, channel }].
+  async recordCategoryHits(entries) {
+    const list = Array.isArray(entries) ? entries : [];
+    if (list.length === 0) return [];
 
     const hits = await this.getCategoryHits();
-    if (!hits[category]) hits[category] = {};
-    const prev = hits[category][lower] || 0;
-    hits[category][lower] = prev + 1;
+    const tags = await this.getCategoryTags();
+    const videos = await this.getCategoryHitVideos();
+    const exclusions = await this.getCategoryTagExclusions();
+    const newlyTagged = [];
+    let changed = false;
 
-    let newlyTagged = false;
-    if (hits[category][lower] >= this.CATEGORY_TAG_THRESHOLD) {
-      const tags = await this.getCategoryTags();
-      if (!tags[category]) tags[category] = [];
-      if (!tags[category].includes(lower)) {
-        tags[category].push(lower);
-        newlyTagged = true;
-        await chrome.storage.local.set({ categoryTags: tags });
+    for (const entry of list) {
+      if (!Array.isArray(entry) || typeof entry[0] !== 'string' || !Array.isArray(entry[1])) continue;
+      const idx = entry[0].indexOf('::');
+      if (idx < 0) continue;
+      const cat = entry[0].slice(0, idx).trim().toLowerCase();
+      const ch = entry[0].slice(idx + 2).trim().toLowerCase();
+      if (!cat || !ch) continue;
+      if (Array.isArray(exclusions[cat]) && exclusions[cat].includes(ch)) continue;
+
+      if (!videos[cat] || typeof videos[cat] !== 'object') videos[cat] = {};
+      const counted = Array.isArray(videos[cat][ch]) ? videos[cat][ch] : [];
+      let added = false;
+      for (const videoKey of entry[1]) {
+        if (typeof videoKey !== 'string' || !videoKey || counted.includes(videoKey)) continue;
+        counted.push(videoKey);
+        added = true;
+      }
+      if (!added) continue;
+      if (counted.length > this.CATEGORY_HIT_VIDEOS_MAX) {
+        counted.splice(0, counted.length - this.CATEGORY_HIT_VIDEOS_MAX);
+      }
+      videos[cat][ch] = counted;
+      if (!hits[cat] || typeof hits[cat] !== 'object') hits[cat] = {};
+      hits[cat][ch] = counted.length;
+      changed = true;
+
+      if (counted.length >= this.CATEGORY_TAG_THRESHOLD) {
+        if (!Array.isArray(tags[cat])) tags[cat] = [];
+        if (!tags[cat].includes(ch)) {
+          tags[cat].push(ch);
+          newlyTagged.push({ category: cat, channel: ch });
+        }
       }
     }
-    await chrome.storage.local.set({ categoryHits: hits });
-    return { tagged: newlyTagged, count: hits[category][lower] };
+
+    if (!changed) return [];
+    // categoryTags is written only when it changed: content scripts refilter
+    // the page on a categoryTags change, but not on hit bookkeeping alone.
+    const writes = { categoryHits: hits, categoryHitVideos: videos };
+    if (newlyTagged.length > 0) writes.categoryTags = tags;
+    await chrome.storage.local.set(writes);
+    return newlyTagged;
   },
 
   // Wipe all auto-tag data for a category — called when a keyword is removed
-  // so the user doesn't see ghosts of an old block.
+  // so the user doesn't see ghosts of an old block. Untag exclusions are kept:
+  // they record the user's own choice, which still holds if the topic is
+  // blocked again later.
   async clearCategoryData(category) {
     if (!category) return;
     const hits = await this.getCategoryHits();
     const tags = await this.getCategoryTags();
+    const videos = await this.getCategoryHitVideos();
     let changed = false;
     if (hits[category]) { delete hits[category]; changed = true; }
     if (tags[category]) { delete tags[category]; changed = true; }
-    if (changed) await chrome.storage.local.set({ categoryHits: hits, categoryTags: tags });
+    if (videos[category]) { delete videos[category]; changed = true; }
+    if (changed) await chrome.storage.local.set({ categoryHits: hits, categoryTags: tags, categoryHitVideos: videos });
   },
 
-  // Remove a single channel from a category's tag list (used by "Unblock channel for category")
+  // Remove a single channel from a category's tag list ("Untag channel" on the
+  // channel page and in Options) and record it as excluded, so
+  // recordCategoryHits never auto-tags it for that category again.
   async untagChannelForCategory(category, channelName) {
     if (!category || !channelName) return;
+    const cat = category.toLowerCase().trim();
     const lower = channelName.toLowerCase().trim();
+    if (!cat || !lower) return;
     const tags = await this.getCategoryTags();
     const hits = await this.getCategoryHits();
-    if (tags[category]) {
-      tags[category] = tags[category].filter(c => c !== lower);
-      if (tags[category].length === 0) delete tags[category];
+    const videos = await this.getCategoryHitVideos();
+    const exclusions = await this.getCategoryTagExclusions();
+    if (Array.isArray(tags[cat])) {
+      tags[cat] = tags[cat].filter(c => c !== lower);
+      if (tags[cat].length === 0) delete tags[cat];
     }
-    if (hits[category] && hits[category][lower]) {
-      delete hits[category][lower];
-      if (Object.keys(hits[category]).length === 0) delete hits[category];
+    if (hits[cat] && hits[cat][lower] !== undefined) {
+      delete hits[cat][lower];
+      if (Object.keys(hits[cat]).length === 0) delete hits[cat];
     }
-    await chrome.storage.local.set({ categoryTags: tags, categoryHits: hits });
+    if (videos[cat] && videos[cat][lower] !== undefined) {
+      delete videos[cat][lower];
+      if (Object.keys(videos[cat]).length === 0) delete videos[cat];
+    }
+    if (!Array.isArray(exclusions[cat])) exclusions[cat] = [];
+    if (!exclusions[cat].includes(lower)) exclusions[cat].push(lower);
+    await chrome.storage.local.set({
+      categoryTags: tags, categoryHits: hits, categoryHitVideos: videos, categoryTagExclusions: exclusions
+    });
   },
 
   // --- Whitelisted Channels (Subscription Exception) ---

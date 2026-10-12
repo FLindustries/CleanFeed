@@ -158,5 +158,8 @@
   "quickAddTitle": { "message": "Add words from this title to your block list" },
   "quickAddPopoverTitle": { "message": "Pick words to block" },
   "quickAddAs": { "message": "Add as:" },
-  "quickAddSubmit": { "message": "Add selected" }
+  "quickAddSubmit": { "message": "Add selected" },
+  "autoTaggedChannelsTitle": { "message": "Channels auto-tagged for this topic" },
+  "autoTaggedChannelsDesc": { "message": "All videos from these channels are hidden because several of their videos matched this topic. Untag a channel to see its other videos again. It won't be auto-tagged for this topic again." },
+  "untagChannelBtn": { "message": "Untag" }
 }

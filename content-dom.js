@@ -136,6 +136,15 @@ const YT = {
     return null;
   },
 
+  // The id of the video a card links to (/watch?v=... or /shorts/...), else null.
+  getVideoId(videoCard) {
+    for (const link of videoCard.querySelectorAll('a[href^="/watch?"], a[href^="/shorts/"]')) {
+      const id = cfVideoIdFromHref(link.getAttribute('href'));
+      if (id) return id;
+    }
+    return null;
+  },
+
   getVideoDescription(videoCard) {
     const selectors = [
       '.metadata-snippet-text',
@@ -622,6 +631,42 @@ function getExpandedKeywords(keyword) {
     }
   }
   return expanded;
+}
+
+// --- Category auto-tag (channels that keep producing a blocked topic) ---
+
+// True when `keyword` is a topic: a KEYWORD_SYNONYMS category key. Only a
+// blocked topic auto-tags channels; a plain keyword ("trailer", or a synonym
+// like "minecraft" blocked on its own) hides matching videos and nothing more.
+function cfIsTopicKeyword(keyword) {
+  const lower = String(keyword || '').trim().toLowerCase();
+  return lower !== '' && Object.prototype.hasOwnProperty.call(KEYWORD_SYNONYMS, lower);
+}
+
+// Key under which a video hidden for `keyword` counts toward auto-tagging its
+// channel ("gaming::ign"), or null when it must not count: the keyword is not
+// a topic, or the channel name is not a real one. YouTube's metadata sometimes
+// exposes a bullet or a view count where the channel name should be; counted,
+// such garbage got auto-tagged and blocked unrelated videos site-wide.
+function cfCategoryHitKey(keyword, channelName) {
+  if (!cfIsTopicKeyword(keyword)) return null;
+  if (!isValidChannelName(channelName)) return null;
+  return String(keyword).trim().toLowerCase() + '::' + channelName.trim().toLowerCase();
+}
+
+// The 11-character video id in a /watch?v=... or /shorts/... link, else null.
+function cfVideoIdFromHref(href) {
+  const text = String(href || '');
+  const m = /[?&]v=([\w-]{11})(?![\w-])/.exec(text) || /\/shorts\/([\w-]{11})(?![\w-])/.exec(text);
+  return m ? m[1] : null;
+}
+
+// Identifies one video when counting auto-tag hits: its id, else its title
+// (the hit key already holds the channel). Null when there is neither.
+function cfCategoryVideoKey(videoId, title) {
+  if (videoId) return videoId;
+  const t = String(title || '').trim().toLowerCase();
+  return t ? 't:' + t.slice(0, 100) : null;
 }
 
 // --- Keyword suggestions (CF+ quick-add popover and Channel Scan) ---

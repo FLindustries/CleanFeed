@@ -4,6 +4,7 @@
 Add `tests/unit/<name>.test.js`: `const test = require('./registry')`, `node:assert`, and
 `require('./load-content-dom')()` for content-dom.js bindings (`matchesKeyword`, `YT`, ...). Wrap vm values in `loadContentDom.plain(x)` before `deepStrictEqual`.
 For page-level `YT` helpers, build a stub page with `tests/unit/fake-dom.js` (`el()`, `fakeDocument()`; small CSS subset, unsupported selectors throw) and pass it as `loadContentDom({ document, location: { pathname } })`.
+For background/storage logic, `require('./load-background')(initialStorage)` vm-loads storage.js + background.js with an in-memory `chrome.storage.local` and a stub ExtPay: call `handleMessage({ action, ... })`, read `storage()` (plain copy) and `writes` (keys of each `set()`).
 
 **Live** (real Chromium + this extension + real logged-out YouTube): `node tests/live/smoke.js`
 Prints a JSON report, exit 0 if the content script ran. Never signs in; on consent pages it clicks only "Reject all".
@@ -14,3 +15,4 @@ Build new scenarios on `tests/live/harness.js`: every browser call has a hard ti
 `node tests/live/navigation.js` (about 75 s): SPA navigation watch -> owner channel -> another channel (blocked) -> Home, a blocked channel -> Home, and the subscriptions toast across navigations; checks that page-level decisions read only the visible page, not YouTube's hidden cached pages.
 `node tests/live/shorts.js` (about 1 min): search-result Shorts (`ytm-shorts-lockup-view-model` in `grid-shelf-view-model`) untouched with nothing blocked; with "minecraft" blocked every matching Short is hidden (one card per Short, empty shelves hidden), and the `/shorts` player hides a matching short, pauses it and resumes playback on the next shown short; a channel's Shorts tab keeps one card per grid cell.
 `node tests/live/quickadd.js` (about 1 min): CF+ quick-add on a result with an apostrophe or hyphen in its title and on a Cyrillic one (the chip keeps the punctuation, the stored keyword equals the chip, matches the title and hides the card), then the Scan modal on a channel's Videos tab (every candidate matches a title; ticking one stores it).
+`node tests/live/autotag.js` (about 1 min): category auto-tag on search results: a plain keyword ("trailer") sends and stores no auto-tag hit; a topic ("gaming") sends each video once across several full refilters, stores only videos hidden on the page (by video id) and tags exactly the channels with 3+ distinct videos; Untag in Options removes the tag, and the channel is not counted or tagged again after a reload.
