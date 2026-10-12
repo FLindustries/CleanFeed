@@ -71,51 +71,68 @@
     <p class="subtitle">Last updated: October 12, 2026</p>
 
     <div class="highlight">
-      <strong>In short:</strong> CleanFeed does not collect, transmit, or sell any of your data. Everything stays on your device.
+      <strong>In short:</strong> CleanFeed has no account, no analytics, and no ads. Your block lists, keywords, and settings stay on your device. CleanFeed contacts one outside service, ExtensionPay (extensionpay.com), for plans and payments.
     </div>
 
     <h2>What CleanFeed Does</h2>
-    <p>CleanFeed is a browser extension that gives you control over your YouTube experience. It lets you permanently block channels, filter content by keywords and topics, and hide Shorts.</p>
+    <p>CleanFeed (version 1.4) is a browser extension for YouTube. It is not affiliated with YouTube or Google. It lets you:</p>
+    <ul>
+      <li>Block channels, so their videos are hidden</li>
+      <li>Hide videos by keyword in the title, or by topic (35 ready-made topics)</li>
+      <li>Hide Shorts, comments, and the "More relevant" shelf on the Subscriptions page</li>
+      <li>Auto-tag a channel for a blocked topic when several of its videos match that topic</li>
+      <li>Keep a log of the videos CleanFeed hid, so you can see what was hidden</li>
+      <li>Lock your settings with a password (Strict Mode)</li>
+      <li>Export your settings to a file and import them again</li>
+    </ul>
+    <p>Some of these features need a paid Pro plan. To do its job, CleanFeed reads video titles and channel names on YouTube pages inside your browser. That reading happens on your device and the text is not sent anywhere.</p>
 
     <h2>Data We Collect</h2>
-    <p><strong>None.</strong> CleanFeed does not collect any personal data, browsing history, or usage analytics.</p>
+    <p><strong>None.</strong> The developer of CleanFeed does not collect or receive any personal data, browsing history, or usage analytics from the extension.</p>
 
-    <h2>Data Stored Locally</h2>
+    <h2>Data Stored on Your Device</h2>
     <p>CleanFeed stores your preferences using Chrome's local storage API (<code>chrome.storage.local</code>). This includes:</p>
     <ul>
       <li>Blocked channel names and handles</li>
-      <li>Blocked keywords and topic categories</li>
+      <li>Blocked keywords and topics</li>
       <li>Channels CleanFeed tagged for a blocked topic, and the videos it counted for that</li>
-      <li>Extension settings (Shorts hiding, language preference, etc.)</li>
+      <li>Extension settings (Shorts hiding, comments hiding, language preference, etc.)</li>
       <li>If you turn on Strict Mode: a SHA-256 hash of its password (never the password itself)</li>
-      <li>Searches saved as interests by versions before 1.4.0, if any (kept on your device, not used by CleanFeed 1.4)</li>
       <li>A log of recently hidden videos (up to 100 entries)</li>
       <li>Basic usage counters (channels blocked, videos hidden)</li>
+      <li>A saved copy of your Free or Pro status and of the plan names and prices, so CleanFeed does not have to ask ExtensionPay every time</li>
+      <li>Data saved by earlier versions of CleanFeed that this version no longer uses. It stays on your device.</li>
     </ul>
-    <p>This data never leaves your browser. It is not sent to any server, not even ours.</p>
+    <p>This data stays in your browser. CleanFeed does not send it to any server, not even ours. If you use Export, CleanFeed saves a file to your computer, and what happens to that file is up to you.</p>
 
-    <h2>Payments</h2>
-    <p>CleanFeed offers an optional Pro upgrade handled by <a href="https://extensionpay.com" target="_blank">ExtensionPay</a>, which uses Stripe for payment processing. When you choose to upgrade:</p>
+    <h2>Plans and Payments</h2>
+    <p>CleanFeed is free to use, with an optional Pro upgrade handled by <a href="https://extensionpay.com" target="_blank">ExtensionPay</a>, which uses Stripe for payment processing. It is the one network service CleanFeed contacts. Here is when that happens:</p>
     <ul>
-      <li>Payment is processed entirely by Stripe through ExtensionPay</li>
-      <li>We never see or store your credit card details</li>
-      <li>ExtensionPay stores only your payment status (paid or free)</li>
+      <li><strong>Showing plans:</strong> CleanFeed asks extensionpay.com for the current plan names and prices. This request carries none of your CleanFeed data.</li>
+      <li><strong>Choosing a plan:</strong> CleanFeed asks ExtensionPay for a random key that identifies your install, saves it in your browser's storage, and opens ExtensionPay's checkout page in a new tab. From then on, CleanFeed checks your paid or free status with extensionpay.com using that key.</li>
+      <li><strong>Payment record:</strong> ExtensionPay stores a small payment and license record for your install: whether you have paid, when, and which plan. CleanFeed keeps a copy of it in your browser using <code>chrome.storage.sync</code>, so if Chrome sync is turned on, that record may sync across the Chrome profiles you are signed in to.</li>
+      <li><strong>Card details:</strong> Payment is processed by Stripe through ExtensionPay. We never see or store your credit card details.</li>
+      <li>Like any website, extensionpay.com can see your IP address when your browser connects to it.</li>
     </ul>
-    <p>For details on how ExtensionPay handles data, see their <a href="https://extensionpay.com/privacy" target="_blank">privacy policy</a>.</p>
+    <p>None of your blocked channels, keywords, settings, or browsing activity is sent to ExtensionPay. For details on how ExtensionPay handles data, see their <a href="https://extensionpay.com/privacy" target="_blank">privacy policy</a>.</p>
 
     <h2>Permissions Explained</h2>
     <ul>
-      <li><strong>storage</strong> — Save your preferences locally on your device</li>
-      <li><strong>alarms</strong> — Only to remove the daily alarm that versions before 1.4.0 created. CleanFeed 1.4 creates no alarms.</li>
+      <li><strong>storage</strong> — Save your settings and block lists on your device, and the payment record described above</li>
+      <li><strong>alarms</strong> — Only to remove the daily timer that versions before 1.4.0 created. CleanFeed 1.4 creates no alarms.</li>
       <li><strong>scripting</strong> — Right after CleanFeed is installed or updated, add its YouTube script and style sheet to the YouTube tabs that are already open, so they are filtered without a reload. Used only on youtube.com tabs.</li>
-      <li><strong>Host permission (youtube.com)</strong> — Read and modify YouTube pages to block channels, filter content, and hide Shorts</li>
+      <li><strong>Host access (youtube.com)</strong> — Read and modify YouTube pages to block channels, filter content, and hide Shorts</li>
+      <li><strong>Script on extensionpay.com</strong> — A small script runs on extensionpay.com pages only, so ExtensionPay's checkout page can tell CleanFeed when a payment is done</li>
     </ul>
 
     <h2>Third-Party Services</h2>
-    <p>CleanFeed does not use any analytics, tracking, or advertising services. The only third-party integration is ExtensionPay for optional payment processing.</p>
+    <p>CleanFeed does not use any analytics, tracking, or advertising services. The third-party services involved are ExtensionPay and Stripe, for optional payments, as described above.</p>
 
     <h2>Data Sharing</h2>
-    <p>We do not share, sell, or transfer your data to any third party. Period.</p>
+    <p>We do not sell your data, and we do not share it with anyone. The one outside contact is with ExtensionPay, described under "Plans and Payments".</p>
+
+    <h2>Deleting Your Data</h2>
+    <p>Uninstalling CleanFeed removes the data it saved in your browser. Payment records held by ExtensionPay and Stripe follow their own policies. If you have questions about them, email us at the address below.</p>
 
     <h2>Children's Privacy</h2>
     <p>CleanFeed does not knowingly collect any information from children under 13.</p>
@@ -125,10 +142,10 @@
 
     <h2>Contact</h2>
     <p>Questions about this privacy policy? Reach us at:</p>
-    <p><a href="mailto:FactualLogic98@gmail.com">FactualLogic98@gmail.com</a></p>
+    <p><a href="mailto:factuallogic98@gmail.com">factuallogic98@gmail.com</a></p>
 
     <footer>
-      CleanFeed &mdash; YouTube That Respects You
+      CleanFeed for YouTube &mdash; not affiliated with YouTube or Google.
     </footer>
   </div>
 </body>

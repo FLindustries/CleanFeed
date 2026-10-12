@@ -1424,7 +1424,7 @@ function setupButtons() {
       'Browser: ' + ua + '\n'
     );
     // Use mailto as default — can be changed to a GitHub Issues URL later
-    window.open('mailto:cleanfeed.support@gmail.com?subject=' + subject + '&body=' + body);
+    window.open('mailto:factuallogic98@gmail.com?subject=' + subject + '&body=' + body);
   });
 }
 
