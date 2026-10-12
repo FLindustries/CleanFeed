@@ -15,6 +15,19 @@
   let savedInterestQueries = []; // active interests from storage (Today/Always)
   let currentSettings = {};
   let isPro = false;
+  // Channels that have been auto-tagged for a blocked category because too
+  // many of their videos already matched. Shape: Map<categoryLower, Set<channelLower>>
+  let categoryTagsLocal = new Map();
+  // Pending category hits — flushed in a batch via background to reduce IPC.
+  // Shape: Map<`${category}::${channelLower}`, count>
+  const pendingCategoryHits = new Map();
+  let categoryHitFlushTimer = null;
+  // Page-scoped overrides (all reset on yt-navigate-finish):
+  //   isPagePaused  — floating toggle: disable ALL filtering on this page
+  //   peekedChannels — handles (lowercase, with @) the user wants to see
+  //                    on this page only, regardless of block/keyword rules
+  let isPagePaused = false;
+  const peekedChannels = new Set();
   let debounceTimer = null;
   let observer = null;
   let lastClickedVideoCard = null;
@@ -25,6 +38,8 @@
   let lastPromptedQuery = ''; // avoid re-prompting for the same query on SPA re-renders
   let lastKnownSearchQuery = ''; // track URL search query for SPA change detection
   let pendingCuriosityCheck = null; // pending waitForSearchResults timeout
+  let _timeTrackerInterval = null;
+  let _timeAccumulated = 0;
 
   // ── Helpers ────────────────────────────────────────────────────────────
 
@@ -88,11 +103,165 @@
     });
   }
 
+  // Returns an <img> using the extension's actual green icon, falling back to
+  // a textual "CF" badge if the runtime URL is unavailable (e.g. extension
+  // context invalidated during a hot reload).
   function cfLogo() {
-    return cfEl('span', { className: 'cleanfeed-cf-logo', textContent: 'CF' });
+    try {
+      const img = document.createElement('img');
+      img.className = 'cleanfeed-cf-logo';
+      img.src = chrome.runtime.getURL('icons/icon48.png');
+      img.alt = 'CF';
+      return img;
+    } catch (e) {
+      return cfEl('span', { className: 'cleanfeed-cf-logo cleanfeed-cf-logo-fallback', textContent: 'CF' });
+    }
+  }
+
+  // Build a slider toggle switch (dark-mode style). The "on" state means the
+  // labelled feature is ACTIVE (e.g. CleanFeed ON, Channel hidden ON).
+  function cfSwitch(opts) {
+    const wrap = document.createElement('button');
+    wrap.type = 'button';
+    wrap.className = 'cf-switch' + (opts.on ? ' cf-on' : '');
+    if (opts.id) wrap.id = opts.id;
+    if (opts.title) wrap.title = opts.title;
+    if (opts.extraClass) wrap.className += ' ' + opts.extraClass;
+
+    const label = cfEl('span', { className: 'cf-switch-label', textContent: opts.label });
+    const thumb = cfEl('span', { className: 'cf-switch-thumb' });
+    const track = cfEl('span', { className: 'cf-switch-track' }, [thumb]);
+
+    wrap.appendChild(label);
+    wrap.appendChild(track);
+    if (typeof opts.onToggle === 'function') {
+      wrap.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        opts.onToggle();
+      });
+    }
+    return wrap;
+  }
+
+  // ── Page-scope skip rules ─────────────────────────────────────────────
+  // Subscriptions feed is the user's own choice — they curated those channels,
+  // so filtering there only gets in the way. If they don't like a video they
+  // can unsubscribe directly.
+  // Returns true if the current local time falls OUTSIDE the user's scheduled
+  // filtering window. During schedule-off hours CleanFeed behaves as if paused.
+  function isOutsideSchedule() {
+    if (!currentSettings.scheduleEnabled) return false;
+    const start = currentSettings.scheduleStart || '09:00';
+    const end = currentSettings.scheduleEnd || '18:00';
+    const days = currentSettings.scheduleDays || [1, 2, 3, 4, 5];
+    const now = new Date();
+    if (!days.includes(now.getDay())) return true; // wrong day → schedule off
+
+    const [startH, startM] = start.split(':').map(n => parseInt(n, 10));
+    const [endH, endM] = end.split(':').map(n => parseInt(n, 10));
+    const cur = now.getHours() * 60 + now.getMinutes();
+    const startMin = startH * 60 + startM;
+    const endMin = endH * 60 + endM;
+    if (startMin <= endMin) {
+      return !(cur >= startMin && cur < endMin);
+    } else {
+      // Wraps midnight (e.g. 22:00 to 06:00)
+      return !(cur >= startMin || cur < endMin);
+    }
+  }
+
+  function isFilteringDisabledForPage() {
+    if (isPagePaused) return true;
+    if (isOutsideSchedule()) return true; // ADDED: schedule outside hours
+    const p = window.location.pathname;
+    if (p === '/feed/subscriptions' || p.startsWith('/feed/subscriptions')) return true;
+    return false;
+  }
+
+  // Extract channel handle (lowercase, "@xyz") from a card or page. Returns null
+  // if unavailable. Used for peek-channel matching against href attributes.
+  function getCardChannelHandle(card) {
+    const link = card.querySelector('a[href^="/@"]');
+    if (!link) return null;
+    const href = (link.getAttribute('href') || '').toLowerCase();
+    const m = href.match(/^\/(@[^\/\?]+)/);
+    return m ? m[1] : null;
+  }
+
+  function isCardPeeked(card) {
+    if (peekedChannels.size === 0) return false;
+    const handle = getCardChannelHandle(card);
+    if (handle && peekedChannels.has(handle)) return true;
+    // Fallback: match by channel name (sidebar cards may lack handle links)
+    const name = YT.getChannelName(card);
+    if (name && peekedChannels.has(name.toLowerCase())) return true;
+    // Channel-page fallback: video cards on a channel's own page don't repeat
+    // the channel link or name inside each card (it's already in the header),
+    // so the previous lookups return null. Use the PAGE channel as the implicit
+    // owner of every card on this page. Without this, "Show just now" did
+    // nothing on a channel's own page.
+    if (YT.isChannelPage()) {
+      const pageName = YT.getPageChannelName();
+      if (pageName && peekedChannels.has(pageName.toLowerCase())) return true;
+      const pageId = YT.getPageChannelId();
+      if (pageId) {
+        const h = pageId.startsWith('@') ? pageId.toLowerCase() : '@' + pageId.toLowerCase();
+        if (peekedChannels.has(h)) return true;
+      }
+    }
+    return false;
   }
 
   // ── Init ───────────────────────────────────────────────────────────────
+
+  // --- Daily Time Limit ---
+
+  function startTimeTracker() {
+    // Send every 30s of foreground time to background
+    if (_timeTrackerInterval) clearInterval(_timeTrackerInterval);
+    _timeTrackerInterval = setInterval(async () => {
+      if (document.visibilityState !== 'visible') return;
+      _timeAccumulated += 30;
+      if (_timeAccumulated >= 30) {
+        sendMsg({ action: 'addTimeUsed', seconds: _timeAccumulated });
+        _timeAccumulated = 0;
+      }
+      await checkTimeLimit();
+    }, 30000);
+    // Initial check immediately
+    checkTimeLimit();
+  }
+
+  async function checkTimeLimit() {
+    if (!currentSettings.dailyTimeLimitEnabled) {
+      document.body.classList.remove('cleanfeed-time-limit-reached');
+      const overlay = document.getElementById('cleanfeed-time-limit-overlay');
+      if (overlay) overlay.remove();
+      return;
+    }
+    const limitMins = currentSettings.dailyTimeLimitMins || 30;
+    const resp = await sendMsg({ action: 'getTimeUsed' });
+    const secsUsed = (resp && resp.secondsUsed) || 0;
+    if (secsUsed >= limitMins * 60) {
+      document.body.classList.add('cleanfeed-time-limit-reached');
+      showTimeLimitOverlay(limitMins);
+    } else {
+      document.body.classList.remove('cleanfeed-time-limit-reached');
+      const overlay = document.getElementById('cleanfeed-time-limit-overlay');
+      if (overlay) overlay.remove();
+    }
+  }
+
+  function showTimeLimitOverlay(limitMins) {
+    if (document.getElementById('cleanfeed-time-limit-overlay')) return;
+    const h = cfEl('h2', { textContent: '⏰ Daily limit reached' });
+    const p = cfEl('p', { textContent: "You've spent " + limitMins + ' minutes on YouTube today. Come back tomorrow.' });
+    const tip = cfEl('p', { className: 'cleanfeed-time-limit-tip', textContent: 'Tip: change the limit in CleanFeed options if you need more time.' });
+    const card = cfEl('div', { className: 'cleanfeed-time-limit-card' }, [h, p, tip]);
+    const wrap = cfEl('div', { id: 'cleanfeed-time-limit-overlay', className: 'cleanfeed-time-limit-overlay' }, [card]);
+    document.body.appendChild(wrap);
+  }
 
   async function init() {
     // Load custom language for content script messages
@@ -111,12 +280,17 @@
     applyState(state);
 
     filterPage();
+    injectQuickAddButtonsAll();
     startObserver();
     trackMenuClicks();
     interceptSuggestedClicks();
     watchForMenuPopup();
     interceptSearch();
     injectChannelPageButton();
+    injectPauseToggle();
+    injectSubscriptionsToggle();
+    applyRelevantSectionVisibility();
+    startTimeTracker();
 
     document.addEventListener('yt-navigate-finish', onNavigate);
     document.addEventListener('yt-page-data-updated', () => {
@@ -129,15 +303,48 @@
     // Listen for direct refilter messages from popup/background
     chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       if (request && request.action === 'refilterPage') {
-        console.log('CleanFeed: received refilterPage message');
-        onStorageChanged({}, 'local');
+        onStorageChanged({ blockedChannels: true }, 'local');
         sendResponse({ success: true });
       }
     });
+
+    // Re-check schedule status every 5 minutes so filtering kicks in/out on time
+    setInterval(() => {
+      if (currentSettings.scheduleEnabled) {
+        // Reset cf-checked state so cards get re-evaluated under new schedule status
+        document.querySelectorAll('[data-cf-checked]').forEach((el) => {
+          delete el.dataset.cfChecked;
+        });
+        document.querySelectorAll('.cleanfeed-hidden').forEach((el) => {
+          el.classList.remove('cleanfeed-hidden');
+        });
+        filterPage();
+      }
+    }, 5 * 60 * 1000);
+  }
+
+  // Diagnostic: dump full filtering state to console once per change. Helps
+  // the user (and us) trace "why is this video being blocked" without needing
+  // a separate dev tool. Deduped so repeated applyState calls don't spam.
+  let _lastDebugKey = '';
+  function logDebugState(state) {
+    const info = {
+      blockedKeywords: (state.blockedKeywords || []).map(k => k.keyword),
+      blockedChannels: (state.blockedChannels || []).map(c => c.name),
+      customSynonyms: state.customSynonyms || {},
+      disabledSynonyms: state.disabledSynonyms || [],
+      categoryTags: state.categoryTags || {},
+      currentChannelOnPage: YT.isChannelPage() ? YT.getPageChannelName() : null
+    };
+    const key = JSON.stringify(info);
+    if (key === _lastDebugKey) return;
+    _lastDebugKey = key;
+    console.log('%cCleanFeed state:', 'color:#00c853;font-weight:bold;', info);
   }
 
   function applyState(state) {
     if (!state) return;
+    logDebugState(state);
     currentSettings = state.settings || {};
     isPro = !!state.isPro;
     blockedKeywords = state.blockedKeywords || [];
@@ -167,13 +374,87 @@
     // Update synonym filters (disabled synonyms + custom synonyms)
     cfSetSynonymFilters(state.disabledSynonyms, state.customSynonyms);
 
+    // Load auto-tagged channels per category (case-insensitive)
+    // ALSO: filter out garbage channel names that may have leaked into storage
+    // BEFORE the channel-name validation was added. Without this, an existing
+    // "•" or view-count entry keeps blocking videos sitewide.
+    categoryTagsLocal = new Map();
+    const tagMap = state.categoryTags || {};
+    let needsCleanup = false;
+    const cleanedTags = {};
+    for (const [cat, channels] of Object.entries(tagMap)) {
+      if (!Array.isArray(channels)) continue;
+      const validChannels = channels.filter(c => isValidChannelName(c));
+      if (validChannels.length !== channels.length) needsCleanup = true;
+      if (validChannels.length > 0) {
+        cleanedTags[cat] = validChannels;
+        categoryTagsLocal.set(cat.toLowerCase(), new Set(validChannels.map(c => c.toLowerCase())));
+      }
+    }
+    if (needsCleanup) {
+      console.log('%cCleanFeed: removed garbage entries from categoryTags', 'color:#ffa500;font-weight:bold;');
+      sendMsg({ action: 'replaceCategoryTags', tags: cleanedTags });
+    }
+
     updateBlockedChannelPreHideStyles();
+  }
+
+  // ── Category auto-tag helpers ─────────────────────────────────────────
+
+  function isChannelTaggedForBlocked(channelLower) {
+    if (!channelLower) return null;
+    // Returns the matching blocked keyword (category) if channel is tagged, else null
+    for (const kw of blockedKeywords) {
+      const cat = kw.keyword.toLowerCase();
+      const tagged = categoryTagsLocal.get(cat);
+      if (tagged && tagged.has(channelLower)) return cat;
+    }
+    return null;
+  }
+
+  function queueCategoryHit(category, channelName) {
+    if (!category || !channelName) return;
+    // Refuse garbage channel names ("•", view counts, dates). Without this
+    // guard, YouTube's metadata layout occasionally exposes a bullet or view
+    // count where the channel name should be — that garbage then accumulated
+    // 3+ hits and got auto-tagged, blocking unrelated videos site-wide.
+    if (!isValidChannelName(channelName)) return;
+    const key = category.toLowerCase() + '::' + channelName.toLowerCase();
+    pendingCategoryHits.set(key, (pendingCategoryHits.get(key) || 0) + 1);
+    if (!categoryHitFlushTimer) {
+      // Flush slowly to coalesce; the data is for the NEXT page load mostly.
+      categoryHitFlushTimer = setTimeout(flushCategoryHits, 2000);
+    }
+  }
+
+  function flushCategoryHits() {
+    categoryHitFlushTimer = null;
+    if (pendingCategoryHits.size === 0) return;
+    const batch = Array.from(pendingCategoryHits.entries());
+    pendingCategoryHits.clear();
+    sendMsg({ action: 'batchIncrementCategoryHits', hits: batch });
   }
 
   // ── SPA Navigation ────────────────────────────────────────────────────
 
   async function onNavigate() {
     const state = await sendMsg({ action: 'getFullState' });
+
+    // Reset page-scoped overrides on every navigation. The user said "solo
+    // su questa pagina" — pause and peeks must NOT leak to the next page.
+    if (isPagePaused) {
+      isPagePaused = false;
+      document.body.classList.remove('cleanfeed-paused');
+    }
+    if (peekedChannels.size > 0) {
+      peekedChannels.clear();
+    }
+    // Stale per-page caches that should NOT survive SPA navigation
+    lastClickedVideoCard = null;
+    promptedSubscriptionExceptions.clear();
+    // Bound loggedVideos to prevent unbounded growth across long sessions
+    if (loggedVideos.size > 500) loggedVideos.clear();
+
     applyState(state);
 
     // Clear curiosity window when leaving search results
@@ -186,13 +467,28 @@
 
     filterPage();
     injectChannelPageButton();
+    injectPauseToggle();
+    injectSubscriptionsToggle();
+    applyRelevantSectionVisibility();
     interceptSearch();
   }
 
   // ── Storage Change Listener ───────────────────────────────────────────
 
   async function onStorageChanged(changes, areaName) {
-    console.log('CleanFeed: onStorageChanged fired', areaName, Object.keys(changes || {}));
+    // PERF: skip when ONLY stats changed. logHidden flushes batched stats every
+    // second; without this skip, every batch triggered a full unhide/refilter
+    // cycle (state fetch + DOM walk + prehide rebuild) — measured ~150ms thrash
+    // per flush on a populated homepage. Stat counters are display-only on the
+    // popup; they don't affect filtering decisions.
+    const keys = Object.keys(changes || {});
+    const statsOnly = keys.length === 1 && keys[0] === 'stats';
+    if (statsOnly) return;
+    // Also skip pure auto-tag hit increments (no functional state change unless
+    // a NEW tag was added, which we'll catch on the categoryTags key)
+    const hitsOnly = keys.length === 1 && keys[0] === 'categoryHits';
+    if (hitsOnly) return;
+
     const state = await sendMsg({ action: 'getFullState' });
     applyState(state);
 
@@ -234,8 +530,13 @@
       sheet.deleteRule(0);
     }
 
-    // Insert a rule for each blocked handle
+    // If filtering is disabled for this page (paused / Subscriptions), emit
+    // no rules at all — the user wants to see everything here.
+    if (isFilteringDisabledForPage()) return;
+
+    // Insert a rule for each blocked handle (skipping peeked channels)
     for (const handle of blockedChannelHandles) {
+      if (peekedChannels.has(handle)) continue;
       // handle is stored as "@something" (lowercase)
       // Use case-insensitive attribute selector (i flag) because YouTube
       // may use different casing (/@Trolden vs /@trolden)
@@ -262,6 +563,21 @@
   // ── Filtering ─────────────────────────────────────────────────────────
 
   function filterPage() {
+    // Update body class for skip pages (CSS handles the rest via :not())
+    if (isFilteringDisabledForPage()) {
+      // CSS shows everything; we still need to clean up any leftover .cleanfeed-hidden
+      // from before navigation so it never reapplies stale state.
+      document.querySelectorAll('.cleanfeed-hidden').forEach((el) => {
+        el.classList.remove('cleanfeed-hidden');
+      });
+      document.querySelectorAll('[data-cf-checked]').forEach((el) => {
+        delete el.dataset.cfChecked;
+      });
+      const blockedMsg = document.getElementById('cf-channel-blocked-msg');
+      if (blockedMsg) blockedMsg.remove();
+      return;
+    }
+
     if (currentSettings.hideShorts) {
       document.body.classList.add('cleanfeed-hide-shorts');
       // Hide "Shorts" filter chip — YouTube removed the [title] attribute so
@@ -280,6 +596,12 @@
         }
       });
     }
+
+    if (currentSettings.hideComments) {
+      document.body.classList.add('cleanfeed-hide-comments');
+    } else {
+      document.body.classList.remove('cleanfeed-hide-comments');
+    }
     hideBlockedContent();
     // Note: updateBlockedChannelPreHideStyles() runs in applyState() when
     // blocked lists change — no need to rebuild CSS rules on every filter pass.
@@ -297,6 +619,9 @@
       card.dataset.cfChecked = 'true';
       newCards++;
 
+      // Peek mode: this channel is exempted for this page view
+      if (isCardPeeked(card)) continue;
+
       const channelName = YT.getChannelName(card);
       const channelLower = channelName ? channelName.toLowerCase() : '';
 
@@ -310,6 +635,18 @@
       // Keyword blocking (with synonym expansion — "crypto" also blocks "bitcoin" etc.)
       const title = YT.getVideoTitle(card) || '';
       const desc = YT.getVideoDescription(card);
+
+      // Auto-tag: channel was already tagged for one of the blocked categories,
+      // so block ALL their videos unless the title is a discussion-style exemption.
+      const taggedCat = isChannelTaggedForBlocked(channelLower);
+      if (taggedCat) {
+        if (!isCategoryExempt(title, taggedCat) && !isWhitelisted(channelName, taggedCat)) {
+          card.classList.add('cleanfeed-hidden');
+          card.setAttribute('data-cf-reason', 'channel-tag:' + taggedCat);
+          logHidden(card, 'channel-tag', taggedCat);
+          continue;
+        }
+      }
 
       for (const kw of blockedKeywords) {
         const expandedTerms = getExpandedKeywords(kw.keyword);
@@ -325,17 +662,18 @@
           // Interests (Just now / Today / Always) only exempt on search results page.
           // On homepage, watch page sidebar, etc., keyword blocking always takes priority.
           if (window.location.pathname === '/results' && matchesSavedInterest(title, desc)) continue;
+          // Discussion-style exemption: "AI in gaming", "Storia di Nintendo", etc.
+          if (isCategoryExempt(title, kw.keyword.toLowerCase())) continue;
 
           card.classList.add('cleanfeed-hidden');
           logHidden(card, 'keyword', kw.keyword);
+          // Channel hit for future auto-tagging
+          if (channelName) queueCategoryHit(kw.keyword, channelName);
           break;
         }
       }
     }
 
-    if (newCards > 0) {
-      console.log('CleanFeed: hideBlockedContent processed', newCards, 'new cards');
-    }
 
     // Re-check previously processed cards — YouTube may recycle DOM elements
     // by swapping their data/content without removing them from the tree.
@@ -348,6 +686,7 @@
       const channelName = YT.getChannelName(card);
       const channelLower = channelName ? channelName.toLowerCase() : '';
       if (channelLower && blockedChannelNames.has(channelLower)) {
+        if (peekedChannels.has(channelLower)) continue;
         card.classList.add('cleanfeed-hidden');
         logHidden(card, 'channel', channelName);
       }
@@ -391,7 +730,7 @@
           }
         }
       }
-      if (name && blockedChannelNames.has(name)) {
+      if (name && blockedChannelNames.has(name) && !peekedChannels.has(name)) {
         el.classList.add('cleanfeed-hidden');
       }
     });
@@ -413,6 +752,7 @@
       if (!titleText) return;
       for (const blocked of blockedChannelNames) {
         if (titleText.includes(blocked)) {
+          if (peekedChannels.has(blocked)) break;
           shelf.classList.add('cleanfeed-hidden');
           break;
         }
@@ -429,7 +769,7 @@
         const links = el.querySelectorAll('a[href^="/@"]');
         for (const link of links) {
           const text = link.textContent.trim().toLowerCase();
-          if (text && blockedChannelNames.has(text)) {
+          if (text && blockedChannelNames.has(text) && !peekedChannels.has(text)) {
             el.classList.add('cleanfeed-hidden');
             el.dataset.cfChecked = 'true';
             break;
@@ -450,6 +790,7 @@
         if (!handleMatch) continue;
         const handle = handleMatch[1];
         if (!blockedChannelHandles.has(handle)) continue;
+        if (peekedChannels.has(handle)) continue;
 
         // Walk up to the nearest renderer-level container and hide it
         const container = link.closest(
@@ -469,21 +810,40 @@
     // If we're on a blocked channel's page, hide ALL their content
     if (YT.isChannelPage()) {
       const pageChannel = YT.getPageChannelName();
-      if (pageChannel && blockedChannelNames.has(pageChannel.toLowerCase())) {
+      const pageChannelLower = pageChannel ? pageChannel.toLowerCase() : '';
+      const pageHandle = YT.getPageChannelId();
+      const pageHandleLower = pageHandle ? (pageHandle.startsWith('@') ? pageHandle.toLowerCase() : '@' + pageHandle.toLowerCase()) : '';
+
+      // Skip the block if user has peeked this channel
+      const peeked = (pageChannelLower && peekedChannels.has(pageChannelLower)) ||
+                     (pageHandleLower && peekedChannels.has(pageHandleLower));
+
+      if (pageChannel && blockedChannelNames.has(pageChannelLower) && !peeked) {
         // Hide the entire page content section
         const content = document.querySelector('ytd-two-column-browse-results-renderer, #contents.ytd-section-list-renderer, ytd-browse #content');
         if (content && !content.dataset.cfBlocked) {
           content.dataset.cfBlocked = 'true';
           content.classList.add('cleanfeed-hidden');
-          // Show a message that this channel is blocked
+          // Show a message that this channel is blocked, with a peek button
           if (!document.getElementById('cf-channel-blocked-msg')) {
+            const peekBtn = cfEl('button', {
+              className: 'cleanfeed-btn cleanfeed-btn-primary',
+              style: 'margin-left:12px;',
+              textContent: msg('showChannelJustNow') !== 'showChannelJustNow'
+                ? msg('showChannelJustNow') : 'Show just now',
+              onClick: () => {
+                setChannelPeek(pageChannel, pageHandle, true);
+              }
+            });
             const msg_el = cfEl('div', {
               id: 'cf-channel-blocked-msg',
               className: 'cleanfeed-toast',
-              style: 'position:relative;margin:40px auto;max-width:500px;bottom:auto;left:auto;transform:none;animation:none;justify-content:center;'
+              style: 'position:relative;margin:40px auto;max-width:560px;bottom:auto;left:auto;transform:none;animation:none;justify-content:center;'
             }, [
               cfLogo(),
-              cfEl('span', { textContent: 'This channel is blocked by CleanFeed' })
+              cfEl('span', { textContent: msg('channelBlockedByCleanFeed') !== 'channelBlockedByCleanFeed'
+                ? msg('channelBlockedByCleanFeed') : 'This channel is blocked by CleanFeed' }),
+              peekBtn
             ]);
             const pageManager = document.querySelector('ytd-page-manager, #page-manager');
             if (pageManager) pageManager.prepend(msg_el);
@@ -515,6 +875,10 @@
 
         if (!container || container.dataset.cfChecked) continue;
         if (container.classList.contains('cleanfeed-hidden')) continue;
+
+        // Peek mode: this channel is exempted for this page view
+        if (isCardPeeked(container)) { container.dataset.cfChecked = 'sidebar'; continue; }
+
         container.dataset.cfChecked = 'sidebar';
 
         const title = titleEl.textContent?.trim() || '';
@@ -524,6 +888,7 @@
         const channelName = YT.getChannelName(container);
         const channelLower = channelName ? channelName.toLowerCase() : '';
         if (channelLower && blockedChannelNames.has(channelLower)) {
+          if (peekedChannels.has(channelLower)) continue;
           container.classList.add('cleanfeed-hidden');
           continue;
         }
@@ -534,6 +899,7 @@
         const handleMatch = channelHref.match(/^\/(@[^\/\?]+)/);
         const handle = handleMatch ? handleMatch[1] : '';
         if (handle && blockedChannelHandles.has(handle)) {
+          if (peekedChannels.has(handle)) continue;
           container.classList.add('cleanfeed-hidden');
           continue;
         }
@@ -545,6 +911,7 @@
         let channelBlocked = false;
         for (const blocked of blockedChannelNames) {
           if (allText.includes(blocked)) {
+            if (peekedChannels.has(blocked)) { channelBlocked = false; break; }
             container.classList.add('cleanfeed-hidden');
             channelBlocked = true;
             break;
@@ -552,12 +919,21 @@
         }
         if (channelBlocked) continue;
 
+        // Auto-tag check for sidebar cards
+        const taggedCat2 = isChannelTaggedForBlocked(channelLower);
+        if (taggedCat2 && !isCategoryExempt(title, taggedCat2)) {
+          container.classList.add('cleanfeed-hidden');
+          continue;
+        }
+
         // Keyword blocking
         for (const kw of blockedKeywords) {
+          if (isCategoryExempt(title, kw.keyword.toLowerCase())) continue;
           const expandedTerms = getExpandedKeywords(kw.keyword);
           for (const term of expandedTerms) {
             if (matchesKeyword(title, term)) {
               container.classList.add('cleanfeed-hidden');
+              if (channelName) queueCategoryHit(kw.keyword, channelName);
               break;
             }
           }
@@ -565,6 +941,9 @@
         }
       }
     }
+
+    // Inject quick-add hover buttons on all visible video cards
+    injectQuickAddButtonsAll();
 
     // Subscription Exception: throttled — runs at most once every 3 seconds
     // to avoid scanning the entire sidebar + all hidden cards on every filter pass.
@@ -669,16 +1048,82 @@
   }
 
   const STOP_WORDS = new Set([
+    // English common words
     'the','a','an','is','are','was','were','in','on','at','to','for','of','and','or',
     'but','not','this','that','with','from','by','how','what','why','when','who','my',
     'your','you','he','she','it','we','they','me','him','her','us','them','do','does',
     'did','will','would','can','could','should','may','might','has','have','had','no',
     'yes','all','just','about','been','being','get','got','new','old','first','last',
     'very','most','some','any','one','two','its','than','then','so','if','up','out',
-    'into','more','come','like','best','full','video','official','music',
-    'il','la','le','lo','un','una','di','da','del','della','che','per','con','non',
-    'sono','una','questo','questa','come','cosa','tutto','tutti','anche','solo','dopo',
-    'prima','ogni','suo','sua','suoi','fare','fatto','essere','stato','stati'
+    'into','more','come','like','best','full','video','videos','official','music',
+    'ago','here','there','also','make','made','too','such','only','same','still','even',
+    'much','many','few','our','their','these','those','part','watch','watching','look',
+    'looking','seen','find','found','using','vs',
+    // Italian articles, prepositions, common particles
+    'il','la','le','lo','un','una','uno','di','da','del','della','dello','dei','degli',
+    'delle','dal','dalla','dallo','dai','dagli','dalle','al','alla','allo','ai','agli',
+    'alle','sul','sulla','sullo','sui','sugli','sulle','che','per','con','non','nel',
+    'nella','nello','nei','negli','nelle','su','tra','fra',
+    // Italian common pronouns / determiners
+    'questo','questa','questi','queste','quello','quella','quei','quelle','quel',
+    'mio','mia','miei','mie','tuo','tua','tuoi','tue','suo','sua','suoi','sue',
+    'nostro','nostra','nostri','nostre','vostro','vostra','vostri','vostre',
+    'loro','lui','lei','noi','voi','essi','esse',
+    // Italian common verbs / adverbs
+    'sono','sei','siamo','siete','era','erano','essere','stato','stata','stati','state',
+    'avere','avuto','avuta','avuti','avute','ho','hai','abbiamo','avete','hanno',
+    'fare','fatto','fatti','fatta','fatte','dire','detto','dare','dato','vedere','visto',
+    'come','cosa','tutto','tutti','tutta','tutte','anche','solo','dopo','prima','ancora',
+    'ogni','poi','molto','poco','tanto','troppo','abbastanza','bene','male','meglio',
+    'forse','magari','davvero','proprio','sempre','mai','già','ormai','adesso','oggi',
+    'ieri','domani','quasi','finalmente','altro','altri','altra','altre','meno','vero',
+    'vera','veri','vere','quindi','perché','perche',
+    // Italian filler words from clickbait titles
+    'sembra','sembrano','sembrava','sembrerebbe','arriva','arrivano','arrivato',
+    'annuncia','annunciato','annunciata','conferma','confermato','presentato','presenta',
+    'minuti','minuto','secondi','secondo','ora','ore','giorni','giorno','anni','anno',
+    'nuovo','nuova','nuovi','nuove','grande','grandi','piccolo','piccola','vecchio',
+    'vecchia','primo','prima','ultimo','ultima','ufficiale','ufficialmente','pure',
+    'subito','ancora','direttamente','semplicemente','assolutamente',
+    'wow','top','solo','così','cosi','contro','dentro','sopra','sotto','dietro',
+    // Generic noisy words that aren't useful blockers
+    'black','white','red','blue','green','grey','gray',
+    'first','second','third','final','main','full','best','worst','great','good','bad',
+    // Common YouTube title fillers
+    'ep','episode','episodio','parte','part','reaction','reactions',
+    // Italian additions from real-world scan results (EveryEye etc.)
+    'più','piu','italiano','italiana','italiani','italiane',
+    'gratis','film','ecco','modalità','modalita','modo','modi',
+    'momento','momenti','perfetto','perfetta','perfetti','perfette',
+    'prova','provato','provata','provati','provate','prove',
+    'cose','cosa','gen','pro','serie','stagione',
+    'spettacolare','spettacolari','fantastico','fantastica','fantastici','fantastiche',
+    'incredibile','incredibili','assurdo','assurda','assurdi','assurde',
+    'vogliamo','voglio','vuoi','vuole','vogliono','vorrei','vorrebbe',
+    'alto','alta','alti','alte','basso','bassa','bassi','basse',
+    'bello','bella','belli','belle','bellissimo','bellissima','bellissimi','bellissime',
+    'brutto','brutta','brutti','brutte','bruttissimo','bruttissimi',
+    'grosso','grossa','grossi','grosse','grande','grandi','piccolo','piccola',
+    'animo','aniimo','energia','corso','tempo','tempi','momenti',
+    'migliore','migliori','peggiore','peggiori','semplice','semplici',
+    'complicato','complicata','difficile','difficili','facile','facili',
+    'pure','direttamente','semplicemente','assolutamente','sicuramente',
+    'arriva','arrivano','arrivato','arrivata','arrivati','arrivate',
+    'parla','parlano','parlato','parlata','dice','dicono','detto','dico',
+    'volta','volte','spesso','raramente','recente','recenti',
+    'totalmente','completamente','letteralmente',
+    // More Italian fillers from real scans (round 2)
+    'pazzesco','pazzesca','pazzeschi','pazzesche',
+    'roba','livello','livelli','stile','stili',
+    'animazione','animazioni','animato','animata',
+    'battono','battere','battuto','battuta',
+    'capolavoro','capolavori','meraviglia','meraviglie',
+    'adoriamo','adoro','adora','adorano','adorato',
+    'grafica','grafiche','grafico','visivo','visiva',
+    'enorme','enormi','immenso','immensa','immensi','immense',
+    'rivelato','rivelata','rivelati','rivelate','svela','svelato','svelata',
+    'oltre','aggiunge','aggiunto','aggiunta','novità','novita',
+    'arriva','arrivata','arrivati','arrivate'
   ]);
 
   function detectTopicFromTitle(title) {
@@ -720,6 +1165,11 @@
     if (loggedVideos.has(dedupKey)) return;
     loggedVideos.add(dedupKey);
 
+    // DEBUG: helps the user understand why a specific video was hidden.
+    // Visible in DevTools console (F12). Single line per video. The dedup
+    // ensures we don't spam the console on re-filter passes.
+    console.log('CleanFeed: hid "' + title + '" — reason: ' + type + ':' + value + ' (channel: ' + channel + ')');
+
     logQueue.push({ title, channel, reason: type + ':' + value });
 
     if (!logFlushTimer) {
@@ -756,8 +1206,34 @@
         document.body.classList.add('cleanfeed-hide-shorts');
       }
 
+      // Re-apply the "Più pertinenti" hide on subs feed — the section often
+      // loads after the chronological grid as the user scrolls. Also ensure
+      // our toggle button is present (YouTube can re-render the header).
+      if (window.location.pathname.startsWith('/feed/subscriptions')) {
+        applyRelevantSectionVisibility();
+        if (!document.getElementById('cleanfeed-subs-toggle')) {
+          injectSubscriptionsToggle();
+        }
+      } else {
+        // Re-inject pause switch into masthead if YouTube re-rendered the header,
+        // or if init ran before the masthead existed in the DOM.
+        if (!document.getElementById('cleanfeed-pause-toggle')) {
+          injectPauseToggle();
+        }
+        // Re-inject channel buttons if the user is on a channel/watch page
+        // and our wrapper is missing (tabs row may have loaded after init).
+        if ((YT.isChannelPage() || window.location.pathname === '/watch') &&
+            !document.querySelector('.cleanfeed-channel-tabs-buttons') &&
+            !document.querySelector('.cleanfeed-channel-block-btn')) {
+          injectChannelPageButton();
+        }
+      }
+
       if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => filterPage(), 300);
+      debounceTimer = setTimeout(() => {
+        filterPage();
+        injectQuickAddButtonsAll();
+      }, 300);
     });
 
     // Scope to the content area — avoids firing on navbar, sidebar, popups, etc.
@@ -949,7 +1425,12 @@
       }
     });
 
-    menuObserver.observe(document.body, {
+    // PERF: scope to the popup container instead of document.body. Previously
+    // this fired on virtually every YouTube interaction (focus, hover, every
+    // class change anywhere in the DOM tree), running getMenuPopup() each time.
+    // ytd-popup-container is the only place menu popups actually appear.
+    const target = document.querySelector('ytd-popup-container') || document.body;
+    menuObserver.observe(target, {
       childList: true,
       subtree: true,
       attributes: true,
@@ -1075,6 +1556,14 @@
     showToast(msg('blockedToast', [name]));
 
     blockedChannelNames.add(name.toLowerCase());
+    // Keep handles set in sync so the pre-hide CSS rule rebuild catches this
+    // channel by /@ href immediately (otherwise cards by handle remained
+    // visible until the next applyState cycle).
+    if (id) {
+      const handleLower = id.startsWith('@') ? id.toLowerCase() : '@' + id.toLowerCase();
+      blockedChannelHandles.add(handleLower);
+      updateBlockedChannelPreHideStyles();
+    }
 
     // Remove the block button if we're on the watch/channel page
     const blockBtn = document.querySelector('.cleanfeed-channel-block-btn');
@@ -1425,9 +1914,11 @@
   // ── Channel Page Button ───────────────────────────────────────────────
 
   function injectChannelPageButton() {
-    // Remove existing button on every call (channel may have changed via SPA navigation)
-    const existing = document.querySelector('.cleanfeed-channel-block-btn');
-    if (existing) existing.remove();
+    // Remove existing buttons + wrapper on every call (channel may have changed via SPA navigation)
+    document.querySelectorAll(
+      '.cleanfeed-channel-block-btn, .cleanfeed-channel-peek-btn, .cleanfeed-channel-tabs-buttons, ' +
+      '.cleanfeed-autotag-banner'
+    ).forEach(el => el.remove());
 
     const isChannel = YT.isChannelPage();
     const isWatch = window.location.pathname === '/watch';
@@ -1501,9 +1992,9 @@
       }
     }
 
-    if (!channelName || !container) return;
+    if (!channelName) return;
 
-    // Create button — resolves channel at click time for safety
+    // Create Block button — resolves channel at click time for safety
     const btn = cfEl(
       'button',
       {
@@ -1511,11 +2002,8 @@
         'data-cf-channel': channelName,
         'data-cf-channel-id': channelId || '',
         onClick: (e) => {
-          // Re-resolve channel name at click time in case SPA navigated
           let name = e.currentTarget.getAttribute('data-cf-channel');
           let id = e.currentTarget.getAttribute('data-cf-channel-id');
-
-          // Double-check by reading from DOM at click time
           if (isWatch) {
             const ownerNow = document.querySelector('ytd-watch-metadata ytd-video-owner-renderer, #above-the-fold ytd-video-owner-renderer');
             const nameNow = ownerNow?.querySelector('ytd-channel-name yt-formatted-string a, ytd-channel-name a');
@@ -1525,22 +2013,762 @@
               id = href.startsWith('/@') ? href.substring(1) : href.replace('/channel/', '');
             }
           }
-
-          if (name) {
-            handleBlockClick(name, id);
-          } else {
-            showToast(msg('couldNotDetect'));
-          }
+          if (name) handleBlockClick(name, id);
+          else showToast(msg('couldNotDetect'));
         },
       },
       [cfLogo(), cfEl('span', { textContent: msg('blockThisChannel') })]
     );
 
-    // Insert after the subscribe button
-    const insertTarget = container.tagName === 'BUTTON' ? container.parentNode : container;
-    if (insertTarget && insertTarget.parentNode) {
-      insertTarget.parentNode.insertBefore(btn, insertTarget.nextSibling);
+    // Create Peek switch
+    const handleLower = channelId
+      ? (channelId.startsWith('@') ? channelId.toLowerCase() : '@' + channelId.toLowerCase())
+      : '';
+    const isPeeked = (channelName && peekedChannels.has(channelName.toLowerCase())) ||
+                     (handleLower && peekedChannels.has(handleLower));
+    const filteringOn = !isPeeked;
+    const peekLabel = msg('cleanFeedLabel') !== 'cleanFeedLabel' ? msg('cleanFeedLabel') : 'CleanFeed';
+    const peekTitle = filteringOn
+      ? (msg('showChannelJustNowTitle') !== 'showChannelJustNowTitle' ? msg('showChannelJustNowTitle') : 'Show this channel just now (page-only)')
+      : (msg('hideChannelAgainTitle') !== 'hideChannelAgainTitle' ? msg('hideChannelAgainTitle') : 'Re-enable filtering for this channel');
+    const peekBtn = cfSwitch({
+      label: peekLabel,
+      on: filteringOn,
+      title: peekTitle,
+      extraClass: 'cleanfeed-channel-peek-btn',
+      onToggle: () => setChannelPeek(channelName, channelId, filteringOn)
+    });
+    peekBtn.setAttribute('data-cf-channel', channelName);
+    peekBtn.setAttribute('data-cf-channel-id', channelId || '');
+
+    // --- Placement ---
+    // On WATCH pages: inline next to the video's Iscriviti button (compact row).
+    // On CHANNEL pages: in the tabs row (Home / Video / Short / Live / ...) at
+    // the far right, wrapped in a flex container that pushes itself with
+    // margin-left:auto. Previously we tucked them under Iscriviti where they
+    // stacked full-width and looked broken.
+    if (isWatch) {
+      if (container && container.parentNode) {
+        container.parentNode.insertBefore(btn, container.nextSibling);
+        btn.parentNode.insertBefore(peekBtn, btn.nextSibling);
+      }
+      return;
     }
+
+    // Scan button — only on channel pages (not watch pages). Lets the user
+    // analyse all currently-loaded video titles and bulk-add new keywords or
+    // synonyms based on what they find.
+    const scanBtn = cfEl('button', {
+      className: 'cleanfeed-channel-scan-btn',
+      title: msg('scanChannelTitle') !== 'scanChannelTitle'
+        ? msg('scanChannelTitle')
+        : 'Analyse this channel and suggest new keywords to block',
+      onClick: () => openScanModal()
+    }, [
+      cfLogo(),
+      cfEl('span', {
+        textContent: msg('scanChannelBtn') !== 'scanChannelBtn'
+          ? msg('scanChannelBtn')
+          : 'Scan'
+      })
+    ]);
+
+    // Auto-tag banner: if this channel was auto-tagged for any blocked
+    // category, surface it CLEARLY with a one-click untag. Without this,
+    // users see "all my videos are blocked but I didn't block this channel"
+    // and have no idea why (the tag is invisible state in storage).
+    const autoTaggedCats = [];
+    const channelNameLower = channelName.toLowerCase();
+    for (const [cat, channelSet] of categoryTagsLocal.entries()) {
+      if (channelSet.has(channelNameLower)) autoTaggedCats.push(cat);
+    }
+
+    let banner = null;
+    if (autoTaggedCats.length > 0 && !isWatch) {
+      banner = cfEl('div', { className: 'cleanfeed-autotag-banner' }, [
+        cfLogo(),
+        cfEl('span', { className: 'cleanfeed-autotag-text' }, [
+          cfEl('strong', { textContent: 'Auto-tagged: ' + autoTaggedCats.join(', ') + '.' }),
+          cfEl('span', { textContent: ' All videos from this channel are blocked because they kept matching these categories. ' })
+        ]),
+        cfEl('button', {
+          className: 'cleanfeed-btn cleanfeed-btn-primary',
+          textContent: 'Untag channel',
+          onClick: async () => {
+            for (const cat of autoTaggedCats) {
+              await sendMsg({ action: 'untagChannelForCategory', category: cat, channelName });
+            }
+            showToast('Untagged ' + channelName + ' from ' + autoTaggedCats.join(', '));
+            // Refresh local state + refilter
+            const newState = await sendMsg({ action: 'getFullState' });
+            if (newState) applyState(newState);
+            document.querySelectorAll('[data-cf-checked]').forEach((el) => {
+              delete el.dataset.cfChecked;
+            });
+            document.querySelectorAll('.cleanfeed-hidden').forEach((el) => {
+              el.classList.remove('cleanfeed-hidden');
+            });
+            filterPage();
+            injectChannelPageButton(); // refresh the banner state
+          }
+        })
+      ]);
+    }
+
+    // Channel page → look for the tabs row first
+    const tabsRow = findChannelTabsRow();
+    if (tabsRow) {
+      const wrapper = cfEl('div', { className: 'cleanfeed-channel-tabs-buttons' });
+      wrapper.appendChild(btn);
+      wrapper.appendChild(peekBtn);
+      wrapper.appendChild(scanBtn);
+      tabsRow.appendChild(wrapper);
+      // Banner goes ABOVE the tabs row, full width, so it can't be missed
+      if (banner && tabsRow.parentElement) {
+        tabsRow.parentElement.insertBefore(banner, tabsRow);
+      }
+      return;
+    }
+
+    // Last-resort fallback: still next to Iscriviti, but wrap in the same flex
+    // container we use for the tabs row so the buttons stay inline horizontally
+    // and don't stack full-width.
+    if (container && container.parentNode) {
+      const wrapper = cfEl('div', { className: 'cleanfeed-channel-tabs-buttons' });
+      wrapper.appendChild(btn);
+      wrapper.appendChild(peekBtn);
+      wrapper.appendChild(scanBtn);
+      container.parentNode.insertBefore(wrapper, container.nextSibling);
+    }
+  }
+
+  // ── Scan Modal ────────────────────────────────────────────────────────
+
+  function openScanModal() {
+    // Collect titles from all visible video cards on this channel page
+    const cards = document.querySelectorAll(YT.VIDEO_CARDS);
+    const titles = [];
+    for (const card of cards) {
+      const t = YT.getVideoTitle(card);
+      if (t) titles.push(t);
+    }
+
+    if (titles.length === 0) {
+      showToast(msg('scanNoVideos') !== 'scanNoVideos'
+        ? msg('scanNoVideos')
+        : 'No videos found on this page to analyse');
+      return;
+    }
+
+    const candidates = extractKeywords(titles);
+    showScanModal(titles.length, candidates);
+  }
+
+  function showScanModal(videoCount, candidates) {
+    // Remove any existing modal
+    const existing = document.getElementById('cleanfeed-scan-modal');
+    if (existing) existing.remove();
+
+    const blockedCats = getBlockedCategoryOptions();
+
+    // --- Build modal structure ---
+    const overlay = cfEl('div', { id: 'cleanfeed-scan-modal', className: 'cleanfeed-modal-overlay' });
+    const panel = cfEl('div', { className: 'cleanfeed-modal-panel' });
+
+    // Header
+    const headerTitle = cfEl('div', { className: 'cleanfeed-modal-title' }, [
+      cfLogo(),
+      cfEl('span', {
+        textContent: (msg('scanTitle') !== 'scanTitle' ? msg('scanTitle') : 'Scan keywords')
+          + ' — ' + videoCount + ' '
+          + (msg('scanVideosAnalysed') !== 'scanVideosAnalysed' ? msg('scanVideosAnalysed') : 'videos analysed')
+      })
+    ]);
+    const closeBtn = cfEl('button', {
+      className: 'cleanfeed-modal-close',
+      textContent: '×',
+      onClick: () => overlay.remove()
+    });
+    const header = cfEl('div', { className: 'cleanfeed-modal-header' }, [headerTitle, closeBtn]);
+    panel.appendChild(header);
+
+    // Helper text
+    panel.appendChild(cfEl('p', {
+      className: 'cleanfeed-modal-help',
+      textContent: msg('scanHelp') !== 'scanHelp'
+        ? msg('scanHelp')
+        : 'Tick the keywords you want to block, then choose where each goes. Tip: scroll the channel page first to load more videos before scanning.'
+    }));
+
+    // Candidate list
+    const list = cfEl('div', { className: 'cleanfeed-scan-list' });
+    if (candidates.length === 0) {
+      list.appendChild(cfEl('div', {
+        className: 'cleanfeed-modal-empty',
+        textContent: msg('scanNoCandidates') !== 'scanNoCandidates'
+          ? msg('scanNoCandidates')
+          : 'No repeated keywords found. Try scrolling to load more videos and re-scan.'
+      }));
+    }
+
+    const rowState = []; // collect for confirm: { phrase, checked, target }
+
+    for (const cand of candidates) {
+      const cls = classifyCandidate(cand.phrase);
+      const alreadyBlocked = cls !== null;
+
+      const row = cfEl('label', { className: 'cleanfeed-scan-row' + (alreadyBlocked ? ' cf-already-blocked' : '') });
+      const checkbox = cfEl('input', {
+        type: 'checkbox',
+        className: 'cleanfeed-scan-checkbox'
+      });
+      if (alreadyBlocked) checkbox.disabled = true;
+
+      const phraseEl = cfEl('span', {
+        className: 'cleanfeed-scan-phrase',
+        textContent: cand.phrase
+      });
+      const countEl = cfEl('span', {
+        className: 'cleanfeed-scan-count',
+        textContent: '(' + cand.count + ')'
+      });
+
+      // Status badge for already-blocked items
+      let badge = null;
+      if (cls) {
+        const label = cls.kind === 'keyword' ? 'already blocked'
+                    : cls.kind === 'category' ? 'category blocked'
+                    : 'in synonyms (' + cls.category + ')';
+        badge = cfEl('span', { className: 'cleanfeed-scan-badge', textContent: label });
+      }
+
+      // Dropdown: standalone / synonym of category X
+      const select = cfEl('select', { className: 'cleanfeed-scan-target' });
+      const standaloneOpt = cfEl('option', { value: '__standalone', textContent: 'Standalone keyword' });
+      select.appendChild(standaloneOpt);
+      for (const cat of blockedCats) {
+        select.appendChild(cfEl('option', {
+          value: 'syn:' + cat,
+          textContent: 'Synonym of ' + cat
+        }));
+      }
+      if (alreadyBlocked) select.disabled = true;
+
+      // Default is always "Standalone keyword" — we don't auto-assign a
+      // category because the candidate words don't carry semantic info
+      // (e.g. "ufficiale", "questi" are not gaming-related). User picks
+      // a category from the dropdown if they want synonym treatment.
+      select.value = '__standalone';
+
+      const state = { phrase: cand.phrase, checkbox, select, alreadyBlocked };
+      rowState.push(state);
+
+      row.appendChild(checkbox);
+      row.appendChild(phraseEl);
+      row.appendChild(countEl);
+      if (badge) row.appendChild(badge);
+      row.appendChild(select);
+      list.appendChild(row);
+    }
+    panel.appendChild(list);
+
+    // Footer
+    const cancelBtn = cfEl('button', {
+      className: 'cleanfeed-btn cleanfeed-btn-secondary',
+      textContent: msg('cancel') !== 'cancel' ? msg('cancel') : 'Cancel',
+      onClick: () => overlay.remove()
+    });
+    const confirmBtn = cfEl('button', {
+      className: 'cleanfeed-btn cleanfeed-btn-primary',
+      textContent: msg('scanAddSelected') !== 'scanAddSelected'
+        ? msg('scanAddSelected')
+        : 'Add selected',
+      onClick: () => confirmScanAdd(rowState, overlay)
+    });
+    const footer = cfEl('div', { className: 'cleanfeed-modal-footer' }, [cancelBtn, confirmBtn]);
+    panel.appendChild(footer);
+
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+
+    // Click-outside to close
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.remove();
+    });
+  }
+
+  async function confirmScanAdd(rowState, overlay) {
+    const selected = rowState.filter(s => !s.alreadyBlocked && s.checkbox.checked);
+    if (selected.length === 0) {
+      showToast(msg('scanNothingSelected') !== 'scanNothingSelected'
+        ? msg('scanNothingSelected') : 'Select at least one keyword');
+      return;
+    }
+
+    // Build the batch payload
+    const items = [];
+    for (const s of selected) {
+      const target = s.select.value;
+      if (target === '__standalone') {
+        items.push({ type: 'keyword', phrase: s.phrase });
+      } else if (target && target.startsWith('syn:')) {
+        items.push({ type: 'synonym', phrase: s.phrase, category: target.slice(4) });
+      }
+    }
+
+    // Close modal IMMEDIATELY so the user doesn't see it frozen during the
+    // background write. Previously the modal stayed open for the duration of
+    // the sequential awaits — ~30s for 15-20 items.
+    overlay.remove();
+    showToast('Adding ' + items.length + '…');
+
+    const res = await sendMsg({ action: 'bulkAddBlockingTerms', items });
+    if (!res) {
+      showToast('Failed to add keywords');
+      return;
+    }
+
+    const parts = [];
+    if (res.addedKw > 0) parts.push(res.addedKw + ' keyword');
+    if (res.addedSyn > 0) parts.push(res.addedSyn + ' synonym');
+    if (res.skippedFree > 0) parts.push(res.skippedFree + ' skipped (free limit)');
+    if (res.duplicates > 0) parts.push(res.duplicates + ' duplicates');
+    showToast(parts.length > 0 ? 'Added: ' + parts.join(', ') : 'Nothing added');
+
+    // Refresh local state + refilter once (storage.onChanged also fires but
+    // we do an explicit refresh to avoid race with the toast timing).
+    const newState = await sendMsg({ action: 'getFullState' });
+    if (newState) applyState(newState);
+    document.querySelectorAll('[data-cf-checked]').forEach((el) => {
+      delete el.dataset.cfChecked;
+    });
+    filterPage();
+
+    if (res.skippedFree > 0) {
+      sendMsg({ action: 'openPaymentPage' });
+    }
+  }
+
+  // ── Channel Scan: extract candidate keywords from visible video titles ──
+
+  // Extract the most frequent multi-occurrence words and phrases from a set
+  // of titles. Returns { phrase, count, type } objects sorted by count desc.
+  // Filters: stop words, words <3 chars, pure-numeric tokens. n-grams (2/3)
+  // are kept only if they bring new info beyond their component words.
+  function extractKeywords(titles) {
+    if (!titles || titles.length === 0) return [];
+
+    const wordCount = new Map();
+    const bigramCount = new Map();
+    const trigramCount = new Map();
+    const MIN_FREQ = 2;
+
+    function isUsefulWord(w) {
+      return w.length >= 3 && !STOP_WORDS.has(w) && !/^\d+$/.test(w);
+    }
+
+    // Tokenize WITHOUT filtering — keep ALL tokens (incl. stop words and
+    // short ones) so we can detect TRUE adjacency in the original title
+    // when building n-grams.
+    function tokenizeAll(title) {
+      const cleaned = title.toLowerCase()
+        .replace(/['’]/g, '') // strip apostrophes so "assassin's" stays together
+        .replace(/[^a-zàáâäçèéêëìíîïñòóôöùúûüß0-9\s]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      return cleaned.split(' ').filter(w => w.length > 0);
+    }
+
+    for (const title of titles) {
+      const allWords = tokenizeAll(title);
+
+      // Unigrams: only useful words, dedup per title
+      const seenIn = new Set();
+      for (const w of allWords) {
+        if (!isUsefulWord(w)) continue;
+        if (seenIn.has(w)) continue;
+        seenIn.add(w);
+        wordCount.set(w, (wordCount.get(w) || 0) + 1);
+      }
+
+      // Bigrams: only emit when BOTH words are useful AND truly adjacent
+      // in the original title (no stop word between them).
+      const seenBg = new Set();
+      for (let i = 0; i < allWords.length - 1; i++) {
+        const w1 = allWords[i], w2 = allWords[i + 1];
+        if (!isUsefulWord(w1) || !isUsefulWord(w2)) continue;
+        const bg = w1 + ' ' + w2;
+        if (seenBg.has(bg)) continue;
+        seenBg.add(bg);
+        bigramCount.set(bg, (bigramCount.get(bg) || 0) + 1);
+      }
+
+      // Trigrams: same — all three must be useful and truly adjacent
+      const seenTg = new Set();
+      for (let i = 0; i < allWords.length - 2; i++) {
+        const w1 = allWords[i], w2 = allWords[i + 1], w3 = allWords[i + 2];
+        if (!isUsefulWord(w1) || !isUsefulWord(w2) || !isUsefulWord(w3)) continue;
+        const tg = w1 + ' ' + w2 + ' ' + w3;
+        if (seenTg.has(tg)) continue;
+        seenTg.add(tg);
+        trigramCount.set(tg, (trigramCount.get(tg) || 0) + 1);
+      }
+    }
+
+    const candidates = [];
+
+    // Trigrams first — most specific
+    for (const [phrase, count] of trigramCount) {
+      if (count >= MIN_FREQ) candidates.push({ phrase, count, type: 'trigram' });
+    }
+    // Bigrams (skip if subsumed by a trigram with same count)
+    for (const [phrase, count] of bigramCount) {
+      if (count < MIN_FREQ) continue;
+      const subsumed = candidates.some(c =>
+        c.type === 'trigram' && c.phrase.includes(phrase) && c.count === count
+      );
+      if (!subsumed) candidates.push({ phrase, count, type: 'bigram' });
+    }
+    // Unigrams (skip if subsumed by a bigram/trigram with same count)
+    for (const [word, count] of wordCount) {
+      if (count < MIN_FREQ) continue;
+      const subsumed = candidates.some(c =>
+        c.type !== 'unigram' &&
+        c.phrase.split(' ').includes(word) &&
+        c.count === count
+      );
+      if (!subsumed) candidates.push({ phrase: word, count, type: 'unigram' });
+    }
+
+    candidates.sort((a, b) => b.count - a.count || a.phrase.localeCompare(b.phrase));
+    // Top 40 — wide enough to catch specific franchises (Ratchet & Clank,
+    // Saros, Pragmata, etc.) that appear 2-3 times, tight enough that the
+    // user doesn't drown in noise.
+    return candidates.slice(0, 40);
+  }
+
+  // Map a user-blocked keyword to its canonical category (gaming, anime, ...).
+  // The user may block "uncharted" (which is a synonym of "gaming"); we still
+  // want to talk about it as "gaming" in the scan UI.
+  function canonicalCategoryOf(userKeyword) {
+    const lower = userKeyword.toLowerCase();
+    if (!KEYWORD_SYNONYMS) return lower;
+    for (const [cat, syns] of Object.entries(KEYWORD_SYNONYMS)) {
+      if (lower === cat || syns.includes(lower)) return cat;
+    }
+    return lower; // standalone keyword with no category — use as-is
+  }
+
+  // Strip diacritics so "pokémon" matches "pokemon" etc.
+  function deburr(s) {
+    return s.normalize('NFD').replace(/[̀-ͯ]/g, '');
+  }
+
+  // Returns "blocked" classification for a candidate phrase:
+  //   - 'keyword'  → exact match of an existing blocked keyword
+  //   - 'category' → matches a blocked category name (e.g. "gaming")
+  //   - 'synonym'  → already in built-in or custom synonyms of a blocked category
+  //   - null       → fresh candidate
+  function classifyCandidate(phrase) {
+    const lower = phrase.toLowerCase();
+    const lowerNoAcc = deburr(lower);
+    // Exact blocked keyword?
+    for (const kw of blockedKeywords) {
+      const k = kw.keyword.toLowerCase();
+      if (k === lower || deburr(k) === lowerNoAcc) {
+        if (KEYWORD_SYNONYMS && KEYWORD_SYNONYMS[k]) {
+          return { kind: 'category', category: k };
+        }
+        return { kind: 'keyword' };
+      }
+    }
+    // Built-in / custom synonym of a blocked category?
+    for (const kw of blockedKeywords) {
+      const userKw = kw.keyword.toLowerCase();
+      const expanded = getExpandedKeywords(userKw);
+      const found = expanded.some(s => {
+        const sl = s.toLowerCase();
+        return sl === lower || deburr(sl) === lowerNoAcc;
+      });
+      if (found) {
+        return { kind: 'synonym', category: canonicalCategoryOf(userKw) };
+      }
+    }
+    return null;
+  }
+
+  // Return canonical categories the user can target with "Add as synonym of …".
+  // Deduplicated so blocking both "gaming" and "uncharted" lists "gaming" once.
+  function getBlockedCategoryOptions() {
+    if (!KEYWORD_SYNONYMS) return [];
+    const out = new Set();
+    for (const kw of blockedKeywords) {
+      const userKw = kw.keyword.toLowerCase();
+      const canonical = canonicalCategoryOf(userKw);
+      if (KEYWORD_SYNONYMS[canonical]) out.add(canonical);
+    }
+    return [...out];
+  }
+
+  // Find the row that holds the channel tabs (Home / Video / Short / Live /
+  // Playlist / Post). Returns the row CONTAINER so callers can append child
+  // elements that visually align with the right edge of the tab strip.
+  function findChannelTabsRow() {
+    // Strategy 1: ARIA tablist — strongest standard signal
+    const tablist = document.querySelector('[role="tablist"]');
+    if (tablist && tablist.offsetWidth > 0) return tablist;
+
+    // Strategy 2: known YouTube tab containers (every layout we've seen)
+    const candidates = [
+      'yt-page-header-renderer yt-tab-group-shape',
+      'yt-tab-group-shape',
+      '.yt-tab-group-shape-wiz',
+      '.page-header-view-model-wiz__page-header-tabs',
+      'ytd-c4-tabbed-header-renderer tp-yt-paper-tabs',
+      'ytd-c4-tabbed-header-renderer #tabsContent',
+      'ytd-c4-tabbed-header-renderer #tabs'
+    ];
+    for (const sel of candidates) {
+      const el = document.querySelector(sel);
+      if (el && el.offsetWidth > 0) return el.parentElement || el;
+    }
+
+    // Strategy 3: walk up from any single tab element
+    const tab = document.querySelector(
+      'yt-tab-shape, ytd-tab-renderer, tp-yt-paper-tab, .yt-tab-shape-wiz, [role="tab"]'
+    );
+    if (tab && tab.offsetWidth > 0 && tab.parentElement) return tab.parentElement;
+
+    // Strategy 4: anchor on the channel-internal search icon
+    const searchIcon =
+      document.querySelector('ytd-c4-tabbed-header-renderer ytd-icon-button[id*="search"]') ||
+      document.querySelector('#expand-channel-search-button') ||
+      document.querySelector('yt-page-header-renderer button[aria-label*="erca" i]') ||
+      document.querySelector('yt-page-header-renderer button[aria-label*="earch" i]');
+    if (searchIcon && searchIcon.parentElement) return searchIcon.parentElement;
+
+    // Strategy 5: text-based last resort. Tab labels are short and unique.
+    // Match a visible clickable with one of the known tab labels and walk to
+    // its parent. Width guard (< 240px) avoids grabbing large containers.
+    const TAB_TEXTS = new Set([
+      'Home', 'Video', 'Videos', 'Shorts', 'Short', 'Live', 'Playlist',
+      'Playlists', 'Post', 'Posts', 'Community', 'Channels', 'About', 'Info',
+      'Featured', 'Releases', 'Podcasts', 'Store'
+    ]);
+    const clickables = document.querySelectorAll('a, button, [role="tab"], yt-tab-shape');
+    for (const el of clickables) {
+      const t = (el.textContent || '').trim();
+      if (!TAB_TEXTS.has(t)) continue;
+      if (el.offsetWidth === 0 || el.offsetWidth > 240) continue;
+      // Walk up to the row container that holds multiple tab siblings
+      let p = el.parentElement;
+      for (let depth = 0; p && depth < 4; depth++) {
+        // The row should contain ≥2 tab-like children
+        const tabsInside = p.querySelectorAll('a, button, [role="tab"], yt-tab-shape');
+        if (tabsInside.length >= 2) return p;
+        p = p.parentElement;
+      }
+    }
+
+    return null;
+  }
+
+  // ── Channel Peek (page-scoped exemption) ──────────────────────────────
+
+  function setChannelPeek(channelName, channelId, on) {
+    const nameLower = channelName ? channelName.toLowerCase() : '';
+    const handleLower = channelId
+      ? (channelId.startsWith('@') ? channelId.toLowerCase() : '@' + channelId.toLowerCase())
+      : '';
+
+    if (on) {
+      if (nameLower) peekedChannels.add(nameLower);
+      if (handleLower) peekedChannels.add(handleLower);
+    } else {
+      if (nameLower) peekedChannels.delete(nameLower);
+      if (handleLower) peekedChannels.delete(handleLower);
+    }
+
+    // Rebuild pre-hide CSS (excludes peeked handles when on, re-includes when off)
+    updateBlockedChannelPreHideStyles();
+
+    // Reset all "checked" markers and the channel-blocked overlay so a fresh
+    // pass re-evaluates every card against the new peek state.
+    document.querySelectorAll('.cleanfeed-hidden').forEach((el) => {
+      el.classList.remove('cleanfeed-hidden');
+    });
+    document.querySelectorAll('[data-cf-checked]').forEach((el) => {
+      delete el.dataset.cfChecked;
+    });
+    document.querySelectorAll('[data-cf-blocked]').forEach((el) => {
+      delete el.dataset.cfBlocked;
+    });
+    const blockedMsg = document.getElementById('cf-channel-blocked-msg');
+    if (blockedMsg) blockedMsg.remove();
+
+    filterPage();
+    // Re-inject the peek button so its label/state updates
+    injectChannelPageButton();
+  }
+
+  // ── Floating Pause Toggle ─────────────────────────────────────────────
+
+  function injectPauseToggle() {
+    // Remove any existing toggle (handles SPA navigation)
+    const existing = document.getElementById('cleanfeed-pause-toggle');
+    if (existing) existing.remove();
+
+    // Don't show on the Subscriptions feed — filtering is already off there.
+    if (window.location.pathname.startsWith('/feed/subscriptions')) return;
+
+    // Anchor: prefer the center section of YouTube's masthead (which contains
+    // the search bar + mic). #center is ALWAYS rendered on every YouTube page
+    // and layout — including watch pages where the right-side #end (Crea /
+    // notifications / avatar) sometimes collapses or fails to render.
+    // Falling back to #end only if #center is unavailable.
+    const center =
+      document.querySelector('ytd-masthead #center') ||
+      document.querySelector('#masthead-container #center') ||
+      document.querySelector('#masthead #center');
+    const end =
+      document.querySelector('ytd-masthead #end') ||
+      document.querySelector('ytd-masthead #buttons');
+
+    const target = center || end;
+    if (!target) return; // masthead not ready yet; observer will retry
+
+    // Switch semantic: ON = CleanFeed active (filtering); OFF = paused.
+    const isOn = !isPagePaused;
+    const label = msg('cleanFeedLabel') !== 'cleanFeedLabel' ? msg('cleanFeedLabel') : 'CleanFeed';
+    const title = isOn
+      ? (msg('pauseCleanFeedTitle') !== 'pauseCleanFeedTitle' ? msg('pauseCleanFeedTitle') : 'Disable CleanFeed on this page only')
+      : (msg('resumeCleanFeedTitle') !== 'resumeCleanFeedTitle' ? msg('resumeCleanFeedTitle') : 'Re-enable CleanFeed on this page');
+
+    const sw = cfSwitch({
+      id: 'cleanfeed-pause-toggle',
+      label,
+      on: isOn,
+      title,
+      onToggle: () => setPagePaused(isOn) // if currently ON, pause it; if OFF, resume
+    });
+    // Append as LAST child of #center → appears right after the mic icon,
+    // before the right-side action group. Visually sits centered-right of the
+    // header, always inside the visible masthead viewport.
+    target.appendChild(sw);
+  }
+
+  // ── Subscriptions: hide "Più pertinenti" algorithmic shelf ───────────
+  // YouTube splits the Subscriptions feed into a chronological list AND a
+  // "Più pertinenti / Most relevant / For you" algorithmic shelf below.
+  // The shelf undoes the whole point of subscribing — it surfaces things YT
+  // wants you to watch, not what your subscribed channels actually posted.
+
+  // Localized titles for the "more relevant / recommended" section header.
+  // Matched as lowercase substring against the section title text.
+  const RELEVANT_SECTION_TITLES = [
+    'più pertinenti', 'piu pertinenti',
+    'most relevant',
+    'for you', 'per te',
+    'recommended', 'consigliati',
+    'recomendados', 'mais relevantes',
+    'plus pertinent', 'pour vous',
+    'empfohlen', 'für dich',
+    'おすすめ', '추천'
+  ];
+
+  function findRelevantSections() {
+    if (!window.location.pathname.startsWith('/feed/subscriptions')) return [];
+    const sections = document.querySelectorAll('ytd-rich-section-renderer, ytd-shelf-renderer');
+    const matches = [];
+    for (const s of sections) {
+      const titleEl = s.querySelector(
+        '#title-text, #title, h2 span, span#title, .grid-subheader, ' +
+        'yt-formatted-string#title, .ytd-rich-shelf-renderer #title'
+      );
+      const t = (titleEl?.textContent || '').trim().toLowerCase();
+      if (!t) continue;
+      for (const candidate of RELEVANT_SECTION_TITLES) {
+        if (t.includes(candidate)) { matches.push(s); break; }
+      }
+    }
+    return matches;
+  }
+
+  function applyRelevantSectionVisibility() {
+    const hide = currentSettings.hideSubsRelevant !== false; // default true
+    const sections = findRelevantSections();
+    for (const s of sections) {
+      if (hide) s.classList.add('cleanfeed-relevant-hidden');
+      else s.classList.remove('cleanfeed-relevant-hidden');
+    }
+  }
+
+  function injectSubscriptionsToggle() {
+    const existing = document.getElementById('cleanfeed-subs-toggle');
+    if (existing) existing.remove();
+
+    if (!window.location.pathname.startsWith('/feed/subscriptions')) return;
+
+    // Anchor: the "Tutte le iscrizioni / All subscriptions" link lives in the
+    // page header. We insert our toggle as a sibling immediately before it so
+    // they sit on the same horizontal row, on the right side of the feed.
+    const anchor =
+      document.querySelector('a[href="/feed/channels"]') ||
+      document.querySelector('a[href*="/feed/channels"]') ||
+      document.querySelector('ytd-rich-grid-renderer #header a');
+    if (!anchor || !anchor.parentNode) return;
+
+    // Switch semantic: ON = "More relevant" shelf hidden (filtering active)
+    //                  OFF = shelf visible (let it through)
+    const hidden = currentSettings.hideSubsRelevant !== false;
+    const label = msg('subsCleanerLabel') !== 'subsCleanerLabel'
+      ? msg('subsCleanerLabel') : 'Hide "More relevant"';
+    const title = hidden
+      ? (msg('showRelevantShelfTitle') !== 'showRelevantShelfTitle'
+          ? msg('showRelevantShelfTitle') : 'Click to show YouTube’s algorithmic shelf')
+      : (msg('hideRelevantShelfTitle') !== 'hideRelevantShelfTitle'
+          ? msg('hideRelevantShelfTitle') : 'Click to hide YouTube’s algorithmic shelf');
+
+    const sw = cfSwitch({
+      id: 'cleanfeed-subs-toggle',
+      label,
+      on: hidden,
+      title,
+      onToggle: async () => {
+        const newVal = !hidden;
+        await sendMsg({ action: 'updateSetting', key: 'hideSubsRelevant', value: newVal });
+        currentSettings.hideSubsRelevant = newVal;
+        applyRelevantSectionVisibility();
+        injectSubscriptionsToggle();
+      }
+    });
+
+    anchor.parentNode.insertBefore(sw, anchor);
+  }
+
+  function setPagePaused(paused) {
+    isPagePaused = paused;
+    if (paused) {
+      document.body.classList.add('cleanfeed-paused');
+    } else {
+      document.body.classList.remove('cleanfeed-paused');
+    }
+    // Rebuild prehide CSS (cleared when paused, restored when resumed)
+    updateBlockedChannelPreHideStyles();
+    // Reset filter markers so every card re-evaluates
+    document.querySelectorAll('.cleanfeed-hidden').forEach((el) => {
+      el.classList.remove('cleanfeed-hidden');
+    });
+    document.querySelectorAll('[data-cf-checked]').forEach((el) => {
+      delete el.dataset.cfChecked;
+    });
+    document.querySelectorAll('[data-cf-blocked]').forEach((el) => {
+      delete el.dataset.cfBlocked;
+    });
+    const blockedMsg = document.getElementById('cf-channel-blocked-msg');
+    if (blockedMsg) blockedMsg.remove();
+    filterPage();
+    injectPauseToggle();
   }
 
   // ── Search Intercept (Interest Boundaries) ────────────────────────────
@@ -1574,12 +2802,24 @@
   }
 
   // Poll URL every second to catch search changes that bypass yt-navigate-finish
+  let searchWatcherInterval = null;
   function startSearchQueryWatcher() {
-    setInterval(() => {
+    if (searchWatcherInterval) clearInterval(searchWatcherInterval);
+    searchWatcherInterval = setInterval(() => {
       if (window.location.pathname === '/results') {
         checkSearchQueryChanged();
       }
     }, 1000);
+    // Clean up the interval and any pending batched logs/hits when the tab
+    // is going away. pagehide fires for both real unloads and bfcache.
+    window.addEventListener('pagehide', () => {
+      if (searchWatcherInterval) {
+        clearInterval(searchWatcherInterval);
+        searchWatcherInterval = null;
+      }
+      flushLogQueue();
+      flushCategoryHits();
+    }, { once: true });
   }
 
   // Detect when the search query in the URL changes
@@ -1629,30 +2869,22 @@
 
   async function triggerInterestCheck(query) {
     if (!query) return;
-    console.log('CleanFeed: triggerInterestCheck', query, sessionPromptCount);
-    // Don't re-prompt for the same query on SPA re-renders
     if (query === lastPromptedQuery) return;
-    // Per-session limit: free users get 3 prompts per page-load session
+    // Per-session safety gate: prevent runaway prompting on weird SPA loops
     if (sessionPromptCount >= 3 && !isPro) return;
 
     // Check if this EXACT query was already saved as an interest — if so, skip
-    // (We use exact match, not fuzzy, to avoid false positives)
     const matchCheck = await sendMsg({ action: 'checkInterestMatch', query });
-    if (matchCheck && matchCheck.exactMatch) {
-      console.log('CleanFeed: query exactly matches existing interest, skipping prompt');
-      return;
-    }
+    if (matchCheck && matchCheck.exactMatch) return;
 
-    // Pro users: also respect the enableInterestBoundaries setting
-    if (isPro) {
-      const result = await sendMsg({ action: 'checkInterest', query });
-      if (!result.shouldPrompt) return;
-    }
+    // Central gate via background — applies to BOTH free and Pro users.
+    // Previously free users bypassed this and their lifetime cap (3 prompts)
+    // was never incremented, so free users effectively saw the teaser forever.
+    const gateResult = await sendMsg({ action: 'checkInterest', query });
+    if (!gateResult || !gateResult.shouldPrompt) return;
 
-    // Show the prompt
     lastPromptedQuery = query;
     sessionPromptCount++;
-    console.log('CleanFeed: showing curiosity prompt #' + sessionPromptCount);
     showCuriosityPrompt(query, isPro);
   }
 
@@ -1709,14 +2941,12 @@
     }
 
     const justNowBtn = makeBtn('cleanfeed-btn-secondary', 'curiosityJustNow', 'Just now', () => {
-      console.log('CleanFeed: Just now clicked, isPro:', proStatus);
       activeJustNowQueries.add(query);
       refilterAfterInterest();
       if (!proStatus) sendMsg({ action: 'openPaymentPage' });
     });
 
     const todayBtn = makeBtn('cleanfeed-btn-secondary', 'curiosityToday', 'Today', () => {
-      console.log('CleanFeed: Today clicked, isPro:', proStatus);
       const endOfDay = new Date();
       endOfDay.setHours(23, 59, 59, 999);
       sendMsg({ action: 'addInterest', query, expiresAt: endOfDay.getTime() }).then(() => {
@@ -1728,7 +2958,6 @@
     });
 
     const alwaysBtn = makeBtn('cleanfeed-btn-primary', 'curiosityAlways', 'Always', () => {
-      console.log('CleanFeed: Always clicked, isPro:', proStatus);
       sendMsg({ action: 'addInterest', query }).then(() => {
         savedInterestQueries.push(query.toLowerCase());
         refilterAfterInterest();
@@ -1762,7 +2991,6 @@
     // Append to document.body — YouTube never replaces body children,
     // so the prompt is immune to SPA DOM swaps. CSS handles fixed positioning.
     document.body.appendChild(promptEl);
-    console.log('CleanFeed: curiosity prompt shown for "' + query + '"');
   }
 
   // ── Subscription Exception Toast ──────────────────────────────────────
@@ -1842,6 +3070,287 @@
     setTimeout(() => {
       if (toast.parentNode) toast.remove();
     }, 300);
+  }
+
+  // --- Quick-add keyword button (per video card, hover-triggered) ---
+
+  // Inject the "CF+" hover button into a single card. Idempotent: skips if already present.
+  function injectQuickAddButton(card) {
+    if (card.querySelector('.cleanfeed-quickadd-btn')) return;
+    // Don't inject on cards already hidden
+    if (card.classList.contains('cleanfeed-hidden')) return;
+
+    // Skip nested-inside-another-video-card cases (e.g. yt-lockup-view-model
+    // wrapped in ytd-rich-item-renderer — both match VIDEO_CARDS). Only the
+    // OUTERMOST card gets the button. Without this guard we ended up with two
+    // CF+ buttons stacked on the same thumbnail on certain channel layouts.
+    let p = card.parentElement;
+    while (p && p !== document.body) {
+      if (p.matches && p.matches(YT.VIDEO_CARDS)) return;
+      p = p.parentElement;
+    }
+
+    const btn = cfEl('button', {
+      className: 'cleanfeed-quickadd-btn',
+      title: msg('quickAddTitle') !== 'quickAddTitle' ? msg('quickAddTitle') : 'Add words from this title to your block list',
+      onClick: (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        const title = YT.getVideoTitle(card) || '';
+        openQuickAddPopover(card, title);
+      }
+    }, [cfEl('span', { textContent: 'CF+' })]);
+
+    // Mark card as relatively-positioned via inline style? We use CSS instead — card has position:relative naturally for most.
+    card.appendChild(btn);
+  }
+
+  // Walks the page and injects the button on all visible video cards
+  function injectQuickAddButtonsAll() {
+    const cards = document.querySelectorAll(YT.VIDEO_CARDS);
+    for (const card of cards) {
+      if (card.dataset.cfQuickaddInjected) continue;
+      card.dataset.cfQuickaddInjected = 'true';
+      injectQuickAddButton(card);
+    }
+  }
+
+  function openQuickAddPopover(card, title) {
+    // Remove existing
+    const existing = document.getElementById('cleanfeed-quickadd-popover');
+    if (existing) existing.remove();
+
+    // Build chips list — original case preserved for display, lowercase for matching
+    const titleWords = title.split(/\s+/).filter(w => w.length > 0);
+    // In QUICK-ADD context, numbers ARE often meaningful (game version, year,
+    // codename: "007 First Light", "GTA 5", "Half-Life 2", "Doom 3"). Allow
+    // them as selectable chips. Only filter true stop words and very short
+    // particles. The general scan modal still uses the stricter filter.
+    function isStopWord(w) {
+      const lower = w.toLowerCase().replace(/[^a-zàáâäçèéêëìíîïñòóôöùúûüß0-9]/g, '');
+      if (!lower) return true;
+      // Length-1 noise OK to skip, but length-2 (e.g. "PS", "AI") could matter
+      if (lower.length < 2) return true;
+      return STOP_WORDS.has(lower);
+    }
+    function tokenLower(w) {
+      return w.toLowerCase().replace(/[^a-zàáâäçèéêëìíîïñòóôöùúûüß0-9]/g, '');
+    }
+
+    // Available "Add as" targets: every blocked category (canonical), plus Standalone
+    const blockedCats = getBlockedCategoryOptions();
+
+    const overlay = cfEl('div', { id: 'cleanfeed-quickadd-popover', className: 'cleanfeed-quickadd-overlay' });
+    const panel = cfEl('div', { className: 'cleanfeed-quickadd-panel' });
+
+    const header = cfEl('div', { className: 'cleanfeed-quickadd-header' });
+    header.appendChild(cfLogo());
+    header.appendChild(cfEl('span', {
+      className: 'cleanfeed-quickadd-title',
+      textContent: msg('quickAddPopoverTitle') !== 'quickAddPopoverTitle'
+        ? msg('quickAddPopoverTitle') : 'Pick words to block'
+    }));
+    const closeBtn = cfEl('button', {
+      className: 'cleanfeed-modal-close',
+      textContent: '×',
+      onClick: () => overlay.remove()
+    });
+    header.appendChild(closeBtn);
+    panel.appendChild(header);
+
+    // Display the original title above chips for context
+    const titleEl = cfEl('div', { className: 'cleanfeed-quickadd-fulltitle', textContent: title });
+    panel.appendChild(titleEl);
+
+    const chipsWrap = cfEl('div', { className: 'cleanfeed-quickadd-chips' });
+    const selected = new Set();
+
+    // Unigram chips
+    for (const w of titleWords) {
+      const lower = w.toLowerCase().replace(/[^a-zàáâäçèéêëìíîïñòóôöùúûüß0-9]/g, '');
+      if (!lower) continue;
+      const stop = isStopWord(w);
+      const chip = cfEl('button', {
+        className: 'cleanfeed-quickadd-chip' + (stop ? ' is-stop' : ''),
+        textContent: w
+      });
+      if (!stop) {
+        chip.addEventListener('click', () => {
+          if (selected.has(lower)) {
+            selected.delete(lower);
+            chip.classList.remove('selected');
+          } else {
+            selected.add(lower);
+            chip.classList.add('selected');
+          }
+        });
+      } else {
+        chip.disabled = true;
+        chip.title = 'Common word — skipped';
+      }
+      chipsWrap.appendChild(chip);
+    }
+
+    // Bigram chips (consecutive non-stop words)
+    for (let i = 0; i < titleWords.length - 1; i++) {
+      const w1 = titleWords[i], w2 = titleWords[i + 1];
+      if (isStopWord(w1) || isStopWord(w2)) continue;
+      const phrase = (w1 + ' ' + w2).toLowerCase()
+        .replace(/[^a-zàáâäçèéêëìíîïñòóôöùúûüß0-9\s]/g, '')
+        .trim();
+      if (!phrase) continue;
+      const chip = cfEl('button', {
+        className: 'cleanfeed-quickadd-chip cleanfeed-quickadd-chip-bigram',
+        textContent: w1 + ' ' + w2
+      });
+      chip.addEventListener('click', () => {
+        if (selected.has(phrase)) {
+          selected.delete(phrase);
+          chip.classList.remove('selected');
+        } else {
+          selected.add(phrase);
+          chip.classList.add('selected');
+        }
+      });
+      chipsWrap.appendChild(chip);
+    }
+
+    // Trigram chips — catches multi-word game names like "007 First Light",
+    // "Half Life 2", "Star Wars Outlaws", "Call of Duty"
+    for (let i = 0; i < titleWords.length - 2; i++) {
+      const w1 = titleWords[i], w2 = titleWords[i + 1], w3 = titleWords[i + 2];
+      if (isStopWord(w1) || isStopWord(w2) || isStopWord(w3)) continue;
+      const phrase = (w1 + ' ' + w2 + ' ' + w3).toLowerCase()
+        .replace(/[^a-zàáâäçèéêëìíîïñòóôöùúûüß0-9\s]/g, '')
+        .trim();
+      if (!phrase) continue;
+      const chip = cfEl('button', {
+        className: 'cleanfeed-quickadd-chip cleanfeed-quickadd-chip-bigram',
+        textContent: w1 + ' ' + w2 + ' ' + w3
+      });
+      chip.addEventListener('click', () => {
+        if (selected.has(phrase)) {
+          selected.delete(phrase);
+          chip.classList.remove('selected');
+        } else {
+          selected.add(phrase);
+          chip.classList.add('selected');
+        }
+      });
+      chipsWrap.appendChild(chip);
+    }
+    panel.appendChild(chipsWrap);
+
+    // Dropdown for target category
+    const targetRow = cfEl('div', { className: 'cleanfeed-quickadd-target' });
+    targetRow.appendChild(cfEl('label', {
+      textContent: msg('quickAddAs') !== 'quickAddAs' ? msg('quickAddAs') : 'Add as:'
+    }));
+    const select = cfEl('select', { className: 'cleanfeed-quickadd-select' });
+    const standaloneOpt = cfEl('option', { value: '__standalone', textContent: 'Standalone keyword' });
+    select.appendChild(standaloneOpt);
+    for (const cat of blockedCats) {
+      select.appendChild(cfEl('option', { value: 'syn:' + cat, textContent: 'Synonym of ' + cat }));
+    }
+    // Smart default: prefer "gaming" if blocked, else first blocked category, else standalone
+    if (blockedCats.includes('gaming')) select.value = 'syn:gaming';
+    else if (blockedCats.length > 0) select.value = 'syn:' + blockedCats[0];
+    else select.value = '__standalone';
+    targetRow.appendChild(select);
+    panel.appendChild(targetRow);
+
+    // Footer
+    const footer = cfEl('div', { className: 'cleanfeed-quickadd-footer' });
+    const cancel = cfEl('button', {
+      className: 'cleanfeed-btn cleanfeed-btn-secondary',
+      textContent: msg('cancel') !== 'cancel' ? msg('cancel') : 'Cancel',
+      onClick: () => overlay.remove()
+    });
+    const submit = cfEl('button', {
+      className: 'cleanfeed-btn cleanfeed-btn-primary',
+      textContent: msg('quickAddSubmit') !== 'quickAddSubmit' ? msg('quickAddSubmit') : 'Add selected',
+      onClick: async () => {
+        if (selected.size === 0) {
+          showToast(msg('scanNothingSelected') !== 'scanNothingSelected' ? msg('scanNothingSelected') : 'Select at least one keyword');
+          return;
+        }
+        const target = select.value;
+
+        // Auto-merge adjacent unigram selections into phrases. If the user
+        // selected ["007", "first", "light"] as separate chips AND they appear
+        // consecutively in the title, treat them as the single phrase
+        // "007 first light" — exactly what game-name blocking needs.
+        const unigramPositions = []; // [{ pos, lower }] for each title word that the user selected
+        for (let i = 0; i < titleWords.length; i++) {
+          const lower = tokenLower(titleWords[i]);
+          if (selected.has(lower)) unigramPositions.push({ pos: i, lower });
+        }
+        // Track which lowers are part of a merged run (so we don't also emit singletons)
+        const mergedLowers = new Set();
+        const mergedPhrases = [];
+        let runStart = -1;
+        for (let i = 0; i < unigramPositions.length; i++) {
+          const cur = unigramPositions[i];
+          const prev = i > 0 ? unigramPositions[i - 1] : null;
+          if (prev && cur.pos === prev.pos + 1) {
+            // continuing a run
+            if (runStart < 0) runStart = i - 1;
+          } else {
+            // close previous run if it was multi-element
+            if (runStart >= 0) {
+              const runWords = unigramPositions.slice(runStart, i).map(x => x.lower);
+              mergedPhrases.push(runWords.join(' '));
+              runWords.forEach(w => mergedLowers.add(w));
+              runStart = -1;
+            }
+          }
+        }
+        if (runStart >= 0) {
+          const runWords = unigramPositions.slice(runStart).map(x => x.lower);
+          mergedPhrases.push(runWords.join(' '));
+          runWords.forEach(w => mergedLowers.add(w));
+        }
+
+        const items = [];
+        // Add merged phrases first
+        for (const phrase of mergedPhrases) {
+          if (target === '__standalone') items.push({ type: 'keyword', phrase });
+          else if (target.startsWith('syn:')) items.push({ type: 'synonym', phrase, category: target.slice(4) });
+        }
+        // Add remaining selections: bigrams/trigrams (which contain spaces) and
+        // singleton unigrams that didn't get merged
+        for (const phrase of selected) {
+          const isMultiword = phrase.includes(' ');
+          if (!isMultiword && mergedLowers.has(phrase)) continue; // already part of a merge
+          if (target === '__standalone') items.push({ type: 'keyword', phrase });
+          else if (target.startsWith('syn:')) items.push({ type: 'synonym', phrase, category: target.slice(4) });
+        }
+        overlay.remove();
+        const res = await sendMsg({ action: 'bulkAddBlockingTerms', items });
+        if (res) {
+          const parts = [];
+          if (res.addedKw > 0) parts.push(res.addedKw + ' keyword');
+          if (res.addedSyn > 0) parts.push(res.addedSyn + ' synonym');
+          if (res.skippedFree > 0) parts.push(res.skippedFree + ' skipped (free limit)');
+          showToast(parts.length > 0 ? 'Added: ' + parts.join(', ') : 'Nothing added');
+          if (res.skippedFree > 0) sendMsg({ action: 'openPaymentPage' });
+          // Refresh state + refilter so the card disappears immediately
+          const newState = await sendMsg({ action: 'getFullState' });
+          if (newState) applyState(newState);
+          document.querySelectorAll('[data-cf-checked]').forEach(el => { delete el.dataset.cfChecked; });
+          filterPage();
+        }
+      }
+    });
+    footer.appendChild(cancel);
+    footer.appendChild(submit);
+    panel.appendChild(footer);
+
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+
+    // Click outside to close
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
   }
 
   // ── Bootstrap ─────────────────────────────────────────────────────────

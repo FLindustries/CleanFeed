@@ -24,7 +24,23 @@ const KEYWORD_SYNONYMS = {
   horror: ['creepypasta', 'scary', 'paura', 'terrore', 'jump scare', 'horror story'],
   true_crime: ['true crime', 'murder', 'omicidio', 'serial killer', 'cold case', 'crime documentary', 'caso irrisolto', 'cronaca nera'],
   reaction: ['reaction video', 'reacting to', 'first time watching', 'reagisco', 'la mia reazione'],
-  unboxing: ['unboxing', 'haul', 'shopping haul', 'what i bought', 'cosa ho comprato']
+  unboxing: ['unboxing', 'haul', 'shopping haul', 'what i bought', 'cosa ho comprato'],
+  // --- New categories added 2026-05 (Wave 1 expansion) ---
+  fitness: ['gym', 'workout', 'bodybuilding', 'push ups', 'pull ups', 'deadlift', 'squat workout', 'bench press', 'palestra', 'allenamento', 'sala pesi', 'integratori', 'whey protein', 'calisthenics', 'crossfit', 'cardio workout', 'hiit workout', 'leg day', 'chest day', 'back day', 'arm day', 'shoulder workout', 'home workout', 'full body workout', 'massa muscolare', 'ipertrofia', 'powerlifting', 'gym motivation'],
+  beauty: ['makeup tutorial', 'skincare routine', 'contouring', 'foundation routine', 'makeup palette', 'lipstick swatches', 'eyeshadow tutorial', 'trucco', 'fondotinta', 'mascara', 'rossetto', 'get ready with me', 'grwm', 'morning skincare', 'night skincare', 'sephora haul', 'ulta haul', 'beauty routine', 'pelle perfetta', 'tutorial trucco', 'beauty guru', 'eyeliner tutorial', 'blush tutorial', 'highlighter makeup', 'kbeauty', 'k-beauty'],
+  fashion: ['ootd', 'capsule wardrobe', 'thrift haul', 'fashion haul', 'outfit ideas', 'what i wore', 'try on haul fashion', 'abbigliamento', 'vestiti', 'look del giorno', 'styling tips', 'fall outfits', 'summer outfits', 'winter outfits', 'spring outfits', 'street style', 'fashion week', 'settimana della moda', 'milano fashion', 'zara haul', 'shein haul', 'fashion lookbook', 'closet tour', 'armadio capsula', 'come vestirsi', 'outfit invernali', 'outfit estivi'],
+  travel: ['travel vlog', 'expat life', 'rv life', 'road trip', 'walking tour', 'city tour', 'vlog viaggio', 'road trip italia', 'in viaggio', 'travel guide', 'travel diary', 'travel itinerary', 'backpacking', 'solo travel', 'digital nomad', 'van life', 'vita da nomadi', 'guida turistica', 'tour della città', 'cosa vedere a', 'what to do in', 'travel hacks', 'budget travel', 'luxury travel', 'island hopping', 'cruise vlog'],
+  food: ['recipe', 'cooking tutorial', 'cook with me', 'food vlog', 'ricetta', 'ricette', 'cucinare', 'in cucina', 'easy meal', 'meal prep', 'what i eat in a day', 'street food', 'food tour', 'tasty recipe', 'home cooking', 'cucina italiana', 'pasta recipe', 'pizza recipe', 'baking recipe', 'dessert recipe', 'masterchef', 'cake decorating', 'cibo di strada', 'cosa mangio', 'cooking show'],
+  cars: ['car review', 'supercar', 'lamborghini', 'ferrari', 'porsche', 'mustang', 'tesla model', 'motore v8', 'motore v12', 'automobile', 'dyno test', 'drift', 'jdm', 'top gear', 'auto sportiva', 'tuning auto', 'recensione auto', 'test drive', 'bugatti', 'mclaren', 'koenigsegg', 'rimac', 'pagani', 'aston martin', 'rolls royce', 'maserati', 'auto elettrica', 'electric car review', 'horsepower', 'cavalli motore', 'cabrio', 'coupe review'],
+  sports: ['nba', 'ufc', 'mma', 'boxe', 'boxing match', 'formula 1', 'f1 race', 'premier league', 'champions league', 'mondiali', 'sports highlights', 'partita', 'nfl highlights', 'nba highlights', 'wwe', 'wrestling match', 'serie a highlights', 'la liga', 'bundesliga', 'tennis match', 'wimbledon', 'roland garros', 'us open tennis', 'australian open', 'motogp', 'rally race', 'olimpiadi', 'pallavolo', 'pallacanestro', 'pugilato'],
+  tech: ['iphone review', 'smartphone review', 'apple event', 'samsung leak', 'gadget review', 'tech news', 'unboxing tech', 'mkbhd', 'recensione tech', 'macbook review', 'ipad review', 'galaxy s', 'pixel phone', 'tech roundup', 'best laptop', 'best smartphone', 'best gadgets', 'tech leaks', 'wwdc', 'ces 2026', 'google io', 'samsung unpacked', 'tech haul', 'edc tech', 'smartwatch review', 'airpods review', 'tech setup', 'gaming setup tour'],
+  ai_hype: ['chatgpt', 'gpt-5', 'gpt-6', 'ai will replace', 'openai', 'sam altman', 'anthropic', 'claude ai', 'gemini ai', 'ai changed everything', 'ai revolution', 'agi', 'llm', 'ai agents', 'ai prompt', 'ai art', 'midjourney', 'stable diffusion', 'dall-e', 'sora ai', 'ai video', 'prompt engineering', 'ai tools', 'best ai tools', 'ai automation', 'ai chatbot', 'this ai is insane', 'ai is taking over', 'ai news today'],
+  news: ['breaking news', 'daily news', 'news today', 'tg1', 'telegiornale', 'ultime notizie', 'cronaca', 'attualità', 'news roundup', 'evening news', 'morning news', 'live news', 'notizie di oggi', 'world news today', 'tg5', 'tg la7', 'news in 5 minutes', 'news update', 'cnn news', 'bbc news', 'fox news', 'msnbc'],
+  religion: ['sermon', 'bible study', 'pastor', 'predica', 'vangelo', 'gospel music', 'preghiera', 'cristiano', 'ramadan', 'islamic lecture', 'sunday service', 'church service', 'rosario', 'catechesi', 'meditazione cristiana', 'lettura biblica', 'studio biblico', 'fede cristiana', 'parola di dio', 'predicazione', 'omelia', 'santa messa', 'preghiera mariana', 'imam lecture'],
+  parenting: ['mom life', 'family vlog', 'parenting tips', 'dad life', 'mom vlog', 'mommy makeover', 'neonato', 'neogenitori', 'gravidanza', 'parto naturale', 'pregnancy vlog', 'birth story', 'newborn routine', 'baby haul', 'nursery tour', 'mom of three', 'dad of two', 'toddler mom', 'pannolini', 'svezzamento', 'maternity vlog', 'postpartum', 'allattamento', 'crescita bambino', 'consigli genitori', 'baby update'],
+  kids: ['nursery rhyme', 'kids song', 'baby shark', 'cocomelon', 'peppa pig', 'paw patrol', 'canzoni bambini', 'cartoni animati', 'masha e orso', 'bluey', 'pj masks', 'super wings', 'baby einstein', 'little baby bum', 'sing along kids', 'kids learning video', 'abc song', 'phonics song', 'kids cartoons', 'pocoyo', 'bing bunny', 'sigle cartoni', 'cartoni per bambini', 'filastrocche'],
+  paranormal: ['haunted house', 'ghost hunting', 'ufo sighting', 'alien encounter', 'paranormal activity', 'sciamano', 'fantasma', 'ufo italia', 'demonologia', 'esorcismo', 'caccia ai fantasmi', 'haunted location', 'cryptid', 'bigfoot', 'mothman', 'skinwalker', 'cerchi nel grano', 'crop circles', 'avvistamento ufo', 'area 51', 'roswell', 'extraterrestre', 'paranormal investigation', 'spirit box', 'ouija board', 'tavola ouija', 'poltergeist'],
+  brainrot: ['cap cut edit', 'capcut edit', 'sigma compilation', 'edit tiktok', 'brainrot', 'ai slop', 'sigma male edit', 'alpha edit', 'gigachad edit', 'mewing tutorial', 'looksmaxxing', 'looksmax', 'skibidi toilet', 'rizz compilation', 'ohio meme', 'fanum tax', 'gyatt', 'sigma rule', 'sigma mindset edit', 'phonk edit', 'velocity edit', 'anime edit tiktok', 'movie edit tiktok', 'patrick bateman edit', 'andrew tate edit', 'goggins edit']
 };
 
 const CATEGORIES = [
@@ -48,6 +64,32 @@ const CATEGORIES = [
   { key: 'true_crime', label: 'True Crime' },
   { key: 'reaction', label: 'Reaction' },
   { key: 'unboxing', label: 'Unboxing' },
+  // Added in v1.3.0 (Wave 1 expansion) — must mirror CATEGORIES above
+  { key: 'fitness', label: 'Fitness' },
+  { key: 'beauty', label: 'Beauty' },
+  { key: 'fashion', label: 'Fashion' },
+  { key: 'travel', label: 'Travel' },
+  { key: 'food', label: 'Food' },
+  { key: 'cars', label: 'Cars' },
+  { key: 'sports', label: 'Sports' },
+  { key: 'tech', label: 'Tech' },
+  { key: 'ai_hype', label: 'AI Hype' },
+  { key: 'news', label: 'News' },
+  { key: 'religion', label: 'Religion' },
+  { key: 'parenting', label: 'Parenting' },
+  { key: 'kids', label: 'Kids' },
+  { key: 'paranormal', label: 'Paranormal' },
+  { key: 'brainrot', label: 'Brainrot' },
+];
+
+// Preset profiles — curated bundles of category keys for one-click setup.
+// Each preset's `keys` must exist in CATEGORIES/KEYWORD_SYNONYMS above.
+const PRESETS = [
+  { id: 'focus_mode', emoji: '\u{1F3AF}', label: 'Focus mode', desc: 'No gaming, drama, reactions, brainrot', keys: ['gaming', 'gossip', 'reaction', 'brainrot'] },
+  { id: 'detox_hustle', emoji: '\u{1F4B0}', label: 'Hustle detox', desc: 'No "get rich quick" content', keys: ['hustle', 'crypto', 'gambling', 'ai_hype'] },
+  { id: 'parent_safe', emoji: '\u{1F468}‍\u{1F469}‍\u{1F467}', label: 'Parent / family safe', desc: 'Filter kids brainrot, horror, NSFW', keys: ['kids', 'brainrot', 'nsfw', 'horror'] },
+  { id: 'no_politics', emoji: '\u{1F5F3}️', label: 'Politics-free zone', desc: 'No politics, news, true crime, conspiracy', keys: ['politics', 'news', 'true_crime', 'conspiracy'] },
+  { id: 'no_drama', emoji: '\u{1F3AD}', label: 'Drama-free', desc: 'No gossip, reactions, brainrot, pranks', keys: ['gossip', 'reaction', 'brainrot', 'pranks'] }
 ];
 
 // Custom i18n system: supports language override from settings.
@@ -114,7 +156,21 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 async function loadState() {
-  state = await chrome.runtime.sendMessage({ action: 'getFullState' });
+  try {
+    const result = await chrome.runtime.sendMessage({ action: 'getFullState' });
+    state = result || {};
+  } catch (e) {
+    // Service worker can be dormant on cold open. Fall back to an empty state
+    // so the page still renders instead of throwing and leaving a blank UI.
+    console.warn('CleanFeed: getFullState failed, retrying once', e);
+    try {
+      await new Promise(r => setTimeout(r, 100));
+      const retry = await chrome.runtime.sendMessage({ action: 'getFullState' });
+      state = retry || {};
+    } catch (e2) {
+      state = {};
+    }
+  }
 }
 
 function notifyContentScript() {
@@ -138,13 +194,151 @@ function applyI18n() {
 
 function renderAll() {
   renderBadge();
+  renderPresets();
   renderSettings();
   renderChannels();
   renderCategories();
   renderKeywords();
   renderHidden();
   renderInterests();
+  renderStats();
   renderAbout();
+}
+
+// ── Preset Profiles ──
+
+function renderPresets() {
+  const container = document.getElementById('presets-grid');
+  if (!container) return;
+  container.textContent = '';
+  const blockedKwSet = new Set((state.blockedKeywords || []).map(k => k.keyword.toLowerCase()));
+
+  for (const preset of PRESETS) {
+    const card = document.createElement('button');
+    card.className = 'preset-card';
+    // If ALL preset keys already blocked, mark active
+    const allActive = preset.keys.every(k => blockedKwSet.has(k.toLowerCase()));
+    if (allActive) card.classList.add('preset-active');
+
+    const emoji = document.createElement('span');
+    emoji.className = 'preset-emoji';
+    emoji.textContent = preset.emoji;
+
+    const text = document.createElement('div');
+    text.className = 'preset-text';
+    const label = document.createElement('div');
+    label.className = 'preset-label';
+    label.textContent = preset.label;
+    const desc = document.createElement('div');
+    desc.className = 'preset-desc';
+    desc.textContent = preset.desc;
+    text.appendChild(label);
+    text.appendChild(desc);
+
+    const status = document.createElement('div');
+    status.className = 'preset-status';
+    const activeCount = preset.keys.filter(k => blockedKwSet.has(k.toLowerCase())).length;
+    status.textContent = activeCount + '/' + preset.keys.length;
+
+    card.appendChild(emoji);
+    card.appendChild(text);
+    card.appendChild(status);
+
+    card.addEventListener('click', async () => {
+      const res = await chrome.runtime.sendMessage({ action: 'applyPreset', categoryKeys: preset.keys });
+      if (res?.reason === 'free_limit') {
+        alert(msg('presetFreeLimitWarning') !== 'presetFreeLimitWarning'
+          ? msg('presetFreeLimitWarning').replace('$WOULD$', res.wouldAdd).replace('$LIMIT$', '3')
+          : 'This preset would add ' + res.wouldAdd + ' more keywords but you have a 3-keyword limit. Upgrade to Pro for unlimited.');
+        chrome.runtime.sendMessage({ action: 'openPaymentPage' });
+        return;
+      }
+      if (res?.success) {
+        await loadState();
+        renderAll();
+        notifyContentScript();
+      }
+    });
+    container.appendChild(card);
+  }
+}
+
+function renderStats() {
+  const cardsContainer = document.getElementById('stats-cards');
+  const catsContainer = document.getElementById('stats-categories');
+  if (!cardsContainer || !catsContainer) return;
+
+  cardsContainer.textContent = '';
+  catsContainer.textContent = '';
+
+  const channelsBlocked = (state.blockedChannels || []).length;
+  const videosHidden = (state.hiddenVideos || []).length;
+  const interestsSaved = Object.keys(state.interests || {}).length;
+  // Rough estimate: avg YouTube video is 8 minutes
+  const hoursSaved = Math.round(videosHidden * 8 / 60 * 10) / 10;
+
+  const cards = [
+    { value: videosHidden, label: msg('statsVideosHidden') !== 'statsVideosHidden' ? msg('statsVideosHidden') : 'Videos filtered' },
+    { value: channelsBlocked, label: msg('statsChannelsBlocked') !== 'statsChannelsBlocked' ? msg('statsChannelsBlocked') : 'Channels blocked' },
+    { value: hoursSaved + 'h', label: msg('statsHoursSaved') !== 'statsHoursSaved' ? msg('statsHoursSaved') : 'Hours saved (est.)' },
+    { value: interestsSaved, label: msg('statsInterestsSaved') !== 'statsInterestsSaved' ? msg('statsInterestsSaved') : 'Interests saved' }
+  ];
+
+  for (const c of cards) {
+    const card = document.createElement('div');
+    card.className = 'stat-card';
+    const v = document.createElement('div');
+    v.className = 'stat-card-value';
+    v.textContent = c.value;
+    const l = document.createElement('div');
+    l.className = 'stat-card-label';
+    l.textContent = c.label;
+    card.appendChild(v);
+    card.appendChild(l);
+    cardsContainer.appendChild(card);
+  }
+
+  // Category breakdown from categoryTags — count channels tagged per category.
+  // categoryTags has shape { [category]: [channelId, channelId, ...] } so we
+  // can simply use array length as the "total" per category.
+  const categoryTags = state.categoryTags || {};
+  const totalsByCategory = [];
+  for (const [cat, channelArray] of Object.entries(categoryTags)) {
+    const total = Array.isArray(channelArray) ? channelArray.length : 0;
+    if (total > 0) totalsByCategory.push({ cat, total });
+  }
+  totalsByCategory.sort((a, b) => b.total - a.total);
+  const top5 = totalsByCategory.slice(0, 5);
+
+  if (top5.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'empty-state';
+    empty.textContent = msg('statsNoData') !== 'statsNoData' ? msg('statsNoData') : 'Browse YouTube with CleanFeed enabled and stats will appear here.';
+    catsContainer.appendChild(empty);
+    return;
+  }
+
+  const maxCount = top5[0].total;
+  for (const item of top5) {
+    const row = document.createElement('div');
+    row.className = 'stats-bar-row';
+    const labelEl = document.createElement('span');
+    labelEl.className = 'stats-bar-label';
+    labelEl.textContent = item.cat;
+    const barWrap = document.createElement('div');
+    barWrap.className = 'stats-bar-wrap';
+    const bar = document.createElement('div');
+    bar.className = 'stats-bar-fill';
+    bar.style.width = Math.round((item.total / maxCount) * 100) + '%';
+    barWrap.appendChild(bar);
+    const countEl = document.createElement('span');
+    countEl.className = 'stats-bar-count';
+    countEl.textContent = item.total;
+    row.appendChild(labelEl);
+    row.appendChild(barWrap);
+    row.appendChild(countEl);
+    catsContainer.appendChild(row);
+  }
 }
 
 function renderBadge() {
@@ -164,6 +358,49 @@ function renderSettings() {
     state.settings.hideShorts = val;
     notifyContentScript();
   }));
+
+  container.appendChild(createToggle('hideComments', 'hideCommentsDesc', state.settings?.hideComments, false, async (val) => {
+    await chrome.runtime.sendMessage({ action: 'updateSetting', key: 'hideComments', value: val });
+    state.settings.hideComments = val;
+    notifyContentScript();
+  }));
+
+  // Daily time limit toggle
+  container.appendChild(createToggle('dailyTimeLimit', 'dailyTimeLimitDesc', state.settings?.dailyTimeLimitEnabled, false, async (val) => {
+    await chrome.runtime.sendMessage({ action: 'updateSetting', key: 'dailyTimeLimitEnabled', value: val });
+    state.settings.dailyTimeLimitEnabled = val;
+    notifyContentScript();
+  }));
+
+  // Minutes input
+  const minsItem = document.createElement('div');
+  minsItem.className = 'toggle-item';
+  const minsInfo = document.createElement('div');
+  minsInfo.className = 'toggle-info';
+  const minsTitle = document.createElement('div');
+  minsTitle.className = 'toggle-title';
+  const minsTitleSpan = document.createElement('span');
+  minsTitleSpan.textContent = msg('dailyTimeLimitMins') !== 'dailyTimeLimitMins' ? msg('dailyTimeLimitMins') : 'Time limit (minutes)';
+  minsTitle.appendChild(minsTitleSpan);
+  minsInfo.appendChild(minsTitle);
+  const minsDesc = document.createElement('div');
+  minsDesc.className = 'toggle-desc';
+  minsDesc.textContent = msg('dailyTimeLimitMinsDesc') !== 'dailyTimeLimitMinsDesc' ? msg('dailyTimeLimitMinsDesc') : 'How many minutes per day before YouTube locks';
+  minsInfo.appendChild(minsDesc);
+  minsItem.appendChild(minsInfo);
+  const minsInput = document.createElement('input');
+  minsInput.type = 'number';
+  minsInput.min = '5';
+  minsInput.max = '480';
+  minsInput.value = state.settings?.dailyTimeLimitMins || 30;
+  minsInput.style.cssText = 'width:80px;padding:6px 10px;border:1px solid var(--cf-border, #e0e0e0);border-radius:6px;font-size:13px;text-align:center;';
+  minsInput.addEventListener('change', async () => {
+    const val = parseInt(minsInput.value, 10) || 30;
+    await chrome.runtime.sendMessage({ action: 'updateSetting', key: 'dailyTimeLimitMins', value: val });
+    state.settings.dailyTimeLimitMins = val;
+  });
+  minsItem.appendChild(minsInput);
+  container.appendChild(minsItem);
 
   container.appendChild(createToggle('interestBoundaries', 'interestBoundariesDesc', state.settings?.enableInterestBoundaries, !state.isPro, async (val) => {
     if (!state.isPro) { chrome.runtime.sendMessage({ action: 'openPaymentPage' }); return; }
@@ -221,6 +458,219 @@ function renderSettings() {
 
   langItem.appendChild(langSelect);
   container.appendChild(langItem);
+
+  // Schedule mode (Pro feature)
+  const schedItem = document.createElement('div');
+  schedItem.className = 'toggle-item';
+  const schedInfo = document.createElement('div');
+  schedInfo.className = 'toggle-info';
+  const schedTitleRow = document.createElement('div');
+  schedTitleRow.className = 'toggle-title';
+  const schedTitle = document.createElement('span');
+  schedTitle.textContent = msg('scheduleMode') !== 'scheduleMode' ? msg('scheduleMode') : 'Schedule mode';
+  schedTitleRow.appendChild(schedTitle);
+  if (!state.isPro) {
+    const pro = document.createElement('span');
+    pro.className = 'pro-badge-inline';
+    pro.textContent = 'PRO';
+    schedTitleRow.appendChild(pro);
+  }
+  schedInfo.appendChild(schedTitleRow);
+  const schedDesc = document.createElement('div');
+  schedDesc.className = 'toggle-desc';
+  schedDesc.textContent = msg('scheduleModeDesc') !== 'scheduleModeDesc'
+    ? msg('scheduleModeDesc')
+    : 'Apply CleanFeed only during specific hours (e.g. work hours)';
+  schedInfo.appendChild(schedDesc);
+  schedItem.appendChild(schedInfo);
+
+  const schedToggle = document.createElement('div');
+  schedToggle.className = 'toggle-switch' + (state.settings?.scheduleEnabled ? ' active' : '') + (!state.isPro ? ' locked' : '');
+  const schedKnob = document.createElement('div');
+  schedKnob.className = 'toggle-knob';
+  schedToggle.appendChild(schedKnob);
+  schedToggle.addEventListener('click', async () => {
+    if (!state.isPro) { chrome.runtime.sendMessage({ action: 'openPaymentPage' }); return; }
+    const newVal = !schedToggle.classList.contains('active');
+    schedToggle.classList.toggle('active', newVal);
+    await chrome.runtime.sendMessage({ action: 'updateSetting', key: 'scheduleEnabled', value: newVal });
+    state.settings.scheduleEnabled = newVal;
+    notifyContentScript();
+    renderSettings(); // re-render to show/hide time pickers
+  });
+  schedItem.appendChild(schedToggle);
+  container.appendChild(schedItem);
+
+  // Time picker rows — only show when schedule enabled and Pro
+  if (state.isPro && state.settings?.scheduleEnabled) {
+    const timesRow = document.createElement('div');
+    timesRow.className = 'toggle-item';
+    timesRow.style.cssText = 'gap:12px;justify-content:flex-start;padding-left:28px;';
+
+    const fromLabel = document.createElement('span');
+    fromLabel.textContent = msg('scheduleFrom') !== 'scheduleFrom' ? msg('scheduleFrom') : 'From';
+    fromLabel.style.cssText = 'font-size:13px;color:var(--cf-text-secondary,#606060);';
+
+    const fromInput = document.createElement('input');
+    fromInput.type = 'time';
+    fromInput.value = state.settings?.scheduleStart || '09:00';
+    fromInput.style.cssText = 'padding:6px 10px;border:1px solid #e0e0e0;border-radius:6px;font-size:13px;';
+    fromInput.addEventListener('change', async () => {
+      await chrome.runtime.sendMessage({ action: 'updateSetting', key: 'scheduleStart', value: fromInput.value });
+      state.settings.scheduleStart = fromInput.value;
+      notifyContentScript();
+    });
+
+    const toLabel = document.createElement('span');
+    toLabel.textContent = msg('scheduleTo') !== 'scheduleTo' ? msg('scheduleTo') : 'to';
+    toLabel.style.cssText = 'font-size:13px;color:var(--cf-text-secondary,#606060);';
+
+    const toInput = document.createElement('input');
+    toInput.type = 'time';
+    toInput.value = state.settings?.scheduleEnd || '18:00';
+    toInput.style.cssText = 'padding:6px 10px;border:1px solid #e0e0e0;border-radius:6px;font-size:13px;';
+    toInput.addEventListener('change', async () => {
+      await chrome.runtime.sendMessage({ action: 'updateSetting', key: 'scheduleEnd', value: toInput.value });
+      state.settings.scheduleEnd = toInput.value;
+      notifyContentScript();
+    });
+
+    timesRow.appendChild(fromLabel);
+    timesRow.appendChild(fromInput);
+    timesRow.appendChild(toLabel);
+    timesRow.appendChild(toInput);
+    container.appendChild(timesRow);
+
+    // Day picker
+    const daysRow = document.createElement('div');
+    daysRow.className = 'toggle-item';
+    daysRow.style.cssText = 'gap:6px;justify-content:flex-start;padding-left:28px;flex-wrap:wrap;';
+    const dayLabel = document.createElement('span');
+    dayLabel.textContent = msg('scheduleDays') !== 'scheduleDays' ? msg('scheduleDays') : 'Days:';
+    dayLabel.style.cssText = 'font-size:13px;color:var(--cf-text-secondary,#606060);margin-right:8px;';
+    daysRow.appendChild(dayLabel);
+
+    const dayLabels = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    const dayLabelsIt = ['Dom','Lun','Mar','Mer','Gio','Ven','Sab'];
+    const useIt = (state.settings?.language === 'it') || (navigator.language?.startsWith('it'));
+    const labels = useIt ? dayLabelsIt : dayLabels;
+    const activeDays = new Set(state.settings?.scheduleDays || [1,2,3,4,5]);
+
+    for (let d = 0; d < 7; d++) {
+      const chip = document.createElement('button');
+      chip.className = 'day-chip' + (activeDays.has(d) ? ' active' : '');
+      chip.textContent = labels[d];
+      chip.style.cssText = 'padding:4px 8px;font-size:11px;border:1px solid ' + (activeDays.has(d) ? '#00c853' : '#e0e0e0') + ';background:' + (activeDays.has(d) ? '#00c853' : 'transparent') + ';color:' + (activeDays.has(d) ? '#fff' : '#0f0f0f') + ';border-radius:999px;cursor:pointer;';
+      chip.addEventListener('click', async () => {
+        const cur = new Set(state.settings?.scheduleDays || []);
+        if (cur.has(d)) cur.delete(d);
+        else cur.add(d);
+        const arr = [...cur].sort();
+        await chrome.runtime.sendMessage({ action: 'updateSetting', key: 'scheduleDays', value: arr });
+        state.settings.scheduleDays = arr;
+        notifyContentScript();
+        renderSettings();
+      });
+      daysRow.appendChild(chip);
+    }
+    container.appendChild(daysRow);
+  }
+
+  // Strict mode (Pro feature)
+  const strictItem = document.createElement('div');
+  strictItem.className = 'toggle-item';
+  const strictInfo = document.createElement('div');
+  strictInfo.className = 'toggle-info';
+  const strictTitleRow = document.createElement('div');
+  strictTitleRow.className = 'toggle-title';
+  const strictTitle = document.createElement('span');
+  strictTitle.textContent = msg('strictMode') !== 'strictMode' ? msg('strictMode') : 'Strict mode';
+  strictTitleRow.appendChild(strictTitle);
+  if (!state.isPro) {
+    const pro = document.createElement('span');
+    pro.className = 'pro-badge-inline';
+    pro.textContent = 'PRO';
+    strictTitleRow.appendChild(pro);
+  }
+  strictInfo.appendChild(strictTitleRow);
+  const strictDesc = document.createElement('div');
+  strictDesc.className = 'toggle-desc';
+  strictDesc.textContent = msg('strictModeDesc') !== 'strictModeDesc'
+    ? msg('strictModeDesc')
+    : "Lock CleanFeed behind a password — you can't weaken filters without entering it.";
+  strictInfo.appendChild(strictDesc);
+  strictItem.appendChild(strictInfo);
+
+  const strictToggle = document.createElement('div');
+  strictToggle.className = 'toggle-switch' + (state.settings?.strictModeEnabled ? ' active' : '') + (!state.isPro ? ' locked' : '');
+  const strictKnob = document.createElement('div');
+  strictKnob.className = 'toggle-knob';
+  strictToggle.appendChild(strictKnob);
+  strictToggle.addEventListener('click', async () => {
+    if (!state.isPro) { chrome.runtime.sendMessage({ action: 'openPaymentPage' }); return; }
+    const currentlyEnabled = strictToggle.classList.contains('active');
+    if (!currentlyEnabled) {
+      const pwd = prompt(msg('strictSetPassword') !== 'strictSetPassword'
+        ? msg('strictSetPassword')
+        : "Set a password (you'll need this to disable strict mode):");
+      if (!pwd || pwd.length < 4) {
+        alert(msg('strictPasswordTooShort') !== 'strictPasswordTooShort'
+          ? msg('strictPasswordTooShort')
+          : 'Password must be at least 4 characters.');
+        return;
+      }
+      const confirmPwd = prompt(msg('strictConfirmPassword') !== 'strictConfirmPassword'
+        ? msg('strictConfirmPassword')
+        : 'Confirm password:');
+      if (pwd !== confirmPwd) {
+        alert(msg('strictPasswordMismatch') !== 'strictPasswordMismatch'
+          ? msg('strictPasswordMismatch')
+          : "Passwords don't match.");
+        return;
+      }
+      const res = await chrome.runtime.sendMessage({ action: 'setStrictPassword', password: pwd });
+      if (res?.success) {
+        strictToggle.classList.add('active');
+        state.settings.strictModeEnabled = true;
+        alert(msg('strictModeEnabledMsg') !== 'strictModeEnabledMsg'
+          ? msg('strictModeEnabledMsg')
+          : "Strict mode enabled. You'll need this password to disable it.");
+      }
+    } else {
+      const pwd = prompt(msg('strictEnterPassword') !== 'strictEnterPassword'
+        ? msg('strictEnterPassword')
+        : 'Enter your strict-mode password to disable:');
+      if (!pwd) return;
+      const res = await chrome.runtime.sendMessage({ action: 'disableStrictMode', password: pwd });
+      if (res?.success) {
+        strictToggle.classList.remove('active');
+        state.settings.strictModeEnabled = false;
+        state.settings.strictModePasswordHash = '';
+      } else {
+        alert(msg('strictWrongPassword') !== 'strictWrongPassword'
+          ? msg('strictWrongPassword')
+          : 'Wrong password. Strict mode stays on.');
+      }
+    }
+  });
+  strictItem.appendChild(strictToggle);
+  container.appendChild(strictItem);
+}
+
+async function requireStrictPasswordIfEnabled() {
+  if (!state.settings?.strictModeEnabled) return true;
+  const pwd = prompt(msg('strictRequiresPassword') !== 'strictRequiresPassword'
+    ? msg('strictRequiresPassword')
+    : 'Strict mode is enabled. Enter password to continue:');
+  if (!pwd) return false;
+  const res = await chrome.runtime.sendMessage({ action: 'verifyStrictPassword', password: pwd });
+  if (!res?.valid) {
+    alert(msg('strictWrongPassword') !== 'strictWrongPassword'
+      ? msg('strictWrongPassword')
+      : 'Wrong password.');
+    return false;
+  }
+  return true;
 }
 
 function createToggle(titleKey, descKey, isActive, isLocked, onChange) {
@@ -312,6 +762,7 @@ function renderChannels() {
     removeBtn.className = 'list-item-remove';
     removeBtn.textContent = '\u00d7';
     removeBtn.addEventListener('click', async () => {
+      if (!(await requireStrictPasswordIfEnabled())) return;
       await chrome.runtime.sendMessage({ action: 'removeBlockedChannel', index: i });
       notifyContentScript();
       await loadState();
@@ -392,6 +843,7 @@ function renderCategories() {
         return;
       }
       if (isActive) {
+        if (!(await requireStrictPasswordIfEnabled())) return;
         const keywords = state.blockedKeywords || [];
         const idx = keywords.findIndex(k => k.keyword.toLowerCase() === cat.key);
         if (idx >= 0) {
@@ -540,6 +992,7 @@ function renderKeywords() {
     removeBtn.className = 'list-item-remove';
     removeBtn.textContent = '\u00d7';
     removeBtn.addEventListener('click', async () => {
+      if (!(await requireStrictPasswordIfEnabled())) return;
       await chrome.runtime.sendMessage({ action: 'removeKeyword', index: i });
       notifyContentScript();
       await loadState();
@@ -753,7 +1206,13 @@ function setupNav() {
 // ── Buttons ──
 
 function setupButtons() {
-  document.getElementById('clearChannelsBtn').addEventListener('click', async () => {
+  // Null-checks: renderAbout() (called before setupButtons via renderAll)
+  // wipes the upgrade card content for Pro users, removing #upgradeBtn from
+  // the DOM. Without these checks, the addEventListener call throws and the
+  // rest of setupButtons never runs.
+  const clearChannelsBtn = document.getElementById('clearChannelsBtn');
+  if (clearChannelsBtn) clearChannelsBtn.addEventListener('click', async () => {
+    if (!(await requireStrictPasswordIfEnabled())) return;
     if (confirm(msg('clearAllConfirm'))) {
       await chrome.runtime.sendMessage({ action: 'clearAllBlockedChannels' });
       notifyContentScript();
@@ -763,11 +1222,68 @@ function setupButtons() {
     }
   });
 
-  document.getElementById('upgradeBtn').addEventListener('click', () => {
+  const upgradeBtn = document.getElementById('upgradeBtn');
+  if (upgradeBtn) upgradeBtn.addEventListener('click', () => {
     chrome.runtime.sendMessage({ action: 'openPaymentPage' });
   });
 
-  document.getElementById('bugReportBtn').addEventListener('click', () => {
+  const resetRecsBtn = document.getElementById('resetRecsBtn');
+  if (resetRecsBtn) resetRecsBtn.addEventListener('click', () => {
+    // Open YouTube's watch history page and search/activity history page
+    window.open('https://www.youtube.com/feed/history', '_blank');
+    window.open('https://myactivity.google.com/product/youtube', '_blank');
+  });
+
+  const exportBtn = document.getElementById('exportBtn');
+  if (exportBtn) exportBtn.addEventListener('click', async () => {
+    const data = await chrome.runtime.sendMessage({ action: 'exportAllData' });
+    if (!data) return;
+    const json = JSON.stringify(data, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const date = new Date().toISOString().slice(0, 10);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'cleanfeed-backup-' + date + '.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
+
+  const importBtn = document.getElementById('importBtn');
+  const importInput = document.getElementById('importInput');
+  if (importBtn && importInput) {
+    importBtn.addEventListener('click', () => importInput.click());
+    importInput.addEventListener('change', async () => {
+      const file = importInput.files?.[0];
+      if (!file) return;
+      const confirmMsg = msg('importConfirm') !== 'importConfirm'
+        ? msg('importConfirm')
+        : 'This will REPLACE your current CleanFeed configuration. Continue?';
+      if (!confirm(confirmMsg)) {
+        importInput.value = '';
+        return;
+      }
+      try {
+        const text = await file.text();
+        const data = JSON.parse(text);
+        const res = await chrome.runtime.sendMessage({ action: 'importAllData', data });
+        if (res?.success) {
+          alert(msg('importSuccess') !== 'importSuccess' ? msg('importSuccess') : 'Import successful. Page will reload.');
+          window.location.reload();
+        } else {
+          alert(msg('importError') !== 'importError' ? msg('importError') : 'Import failed: invalid file format.');
+        }
+      } catch (e) {
+        alert((msg('importError') !== 'importError' ? msg('importError') : 'Import failed') + ': ' + e.message);
+      }
+      importInput.value = '';
+    });
+  }
+
+  const bugReportBtn = document.getElementById('bugReportBtn');
+  if (bugReportBtn) bugReportBtn.addEventListener('click', () => {
     // Open a pre-filled GitHub issue or mailto link
     const version = chrome.runtime.getManifest().version;
     const ua = navigator.userAgent;

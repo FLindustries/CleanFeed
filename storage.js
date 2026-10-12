@@ -8,14 +8,27 @@ const Storage = {
     whitelistedChannels: [],
     disabledSynonyms: [],    // individual synonyms turned off within categories
     customSynonyms: {},      // user-added synonyms per category: {gaming: ["resident evil"]}
+    categoryHits: {},        // per-category per-channel block counts: {gaming: {"every eye": 5}}
+    categoryTags: {},        // channels auto-tagged for a category once hits >= threshold: {gaming: ["every eye"]}
     interests: {},
     hiddenVideos: [],
     settings: {
       hideShorts: false,
+      hideComments: false,
       enableSmartDecay: true,
       enableInterestBoundaries: true,
-      language: 'auto'       // 'auto', 'en', 'it'
+      hideSubsRelevant: true, // hide the "Più pertinenti"/"For you" algorithmic shelf on /feed/subscriptions
+      language: 'auto',       // 'auto', 'en', 'it'
+      dailyTimeLimitEnabled: false,
+      dailyTimeLimitMins: 30,
+      scheduleEnabled: false,
+      scheduleStart: '09:00',
+      scheduleEnd: '18:00',
+      scheduleDays: [1, 2, 3, 4, 5],
+      strictModeEnabled: false,
+      strictModePasswordHash: ''
     },
+    dailyTimeTracking: { day: '', secondsUsed: 0 },
     stats: {
       channelsBlocked: 0,
       videosHidden: 0,
@@ -28,6 +41,11 @@ const Storage = {
 
   FREE_KEYWORD_LIMIT: 3,
   HIDDEN_VIDEOS_MAX: 100,
+  // After N hidden videos from the same channel in a category, auto-tag the
+  // whole channel so future videos are blocked even if the title doesn't
+  // contain any keyword/synonym. Catches the "Gaussian Splatting on a gaming
+  // channel" case where the title gives no signal.
+  CATEGORY_TAG_THRESHOLD: 3,
 
   async init() {
     const data = await chrome.storage.local.get(null);
@@ -154,6 +172,74 @@ const Storage = {
     await chrome.storage.local.set({ customSynonyms: customs });
   },
 
+  // --- Category Auto-Tag (channels that keep producing blocked content) ---
+
+  async getCategoryHits() {
+    const { categoryHits } = await chrome.storage.local.get('categoryHits');
+    return categoryHits || {};
+  },
+
+  async getCategoryTags() {
+    const { categoryTags } = await chrome.storage.local.get('categoryTags');
+    return categoryTags || {};
+  },
+
+  // Records that a video from `channelName` was hidden under `category`.
+  // Returns { tagged: true } the moment the channel crosses the threshold so
+  // the caller can refilter and surface the change.
+  async incrementCategoryHit(category, channelName) {
+    if (!category || !channelName) return { tagged: false };
+    const lower = channelName.toLowerCase().trim();
+    if (!lower) return { tagged: false };
+
+    const hits = await this.getCategoryHits();
+    if (!hits[category]) hits[category] = {};
+    const prev = hits[category][lower] || 0;
+    hits[category][lower] = prev + 1;
+
+    let newlyTagged = false;
+    if (hits[category][lower] >= this.CATEGORY_TAG_THRESHOLD) {
+      const tags = await this.getCategoryTags();
+      if (!tags[category]) tags[category] = [];
+      if (!tags[category].includes(lower)) {
+        tags[category].push(lower);
+        newlyTagged = true;
+        await chrome.storage.local.set({ categoryTags: tags });
+      }
+    }
+    await chrome.storage.local.set({ categoryHits: hits });
+    return { tagged: newlyTagged, count: hits[category][lower] };
+  },
+
+  // Wipe all auto-tag data for a category — called when a keyword is removed
+  // so the user doesn't see ghosts of an old block.
+  async clearCategoryData(category) {
+    if (!category) return;
+    const hits = await this.getCategoryHits();
+    const tags = await this.getCategoryTags();
+    let changed = false;
+    if (hits[category]) { delete hits[category]; changed = true; }
+    if (tags[category]) { delete tags[category]; changed = true; }
+    if (changed) await chrome.storage.local.set({ categoryHits: hits, categoryTags: tags });
+  },
+
+  // Remove a single channel from a category's tag list (used by "Unblock channel for category")
+  async untagChannelForCategory(category, channelName) {
+    if (!category || !channelName) return;
+    const lower = channelName.toLowerCase().trim();
+    const tags = await this.getCategoryTags();
+    const hits = await this.getCategoryHits();
+    if (tags[category]) {
+      tags[category] = tags[category].filter(c => c !== lower);
+      if (tags[category].length === 0) delete tags[category];
+    }
+    if (hits[category] && hits[category][lower]) {
+      delete hits[category][lower];
+      if (Object.keys(hits[category]).length === 0) delete hits[category];
+    }
+    await chrome.storage.local.set({ categoryTags: tags, categoryHits: hits });
+  },
+
   // --- Whitelisted Channels (Subscription Exception) ---
 
   async getWhitelistedChannels() {
@@ -196,7 +282,10 @@ const Storage = {
 
   async addInterest(query, expiresAt) {
     const interests = await this.getInterests();
-    const key = query.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    let key = query.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    // Punctuation-only or non-ASCII (CJK, emoji) queries collapsed to "" and
+    // overwrote each other. Fall back to a timestamp suffix.
+    if (!key) key = 'interest-' + Date.now();
 
     interests[key] = {
       query,
@@ -340,5 +429,37 @@ const Storage = {
     onboarding.interestPromptCount = (onboarding.interestPromptCount || 0) + 1;
     await chrome.storage.local.set({ onboarding });
     return onboarding.interestPromptCount;
+  },
+
+  // --- Daily Time Tracking ---
+
+  async getTodayKey() {
+    const d = new Date();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  },
+
+  async addTimeUsed(seconds) {
+    const today = await this.getTodayKey();
+    const { dailyTimeTracking } = await chrome.storage.local.get('dailyTimeTracking');
+    const cur = dailyTimeTracking || { day: '', secondsUsed: 0 };
+    // Reset counter on new day
+    if (cur.day !== today) { cur.day = today; cur.secondsUsed = 0; }
+    cur.secondsUsed += seconds;
+    await chrome.storage.local.set({ dailyTimeTracking: cur });
+    return cur;
+  },
+
+  async getTimeUsed() {
+    const today = await this.getTodayKey();
+    const { dailyTimeTracking } = await chrome.storage.local.get('dailyTimeTracking');
+    if (!dailyTimeTracking || dailyTimeTracking.day !== today) return 0;
+    return dailyTimeTracking.secondsUsed;
+  },
+
+  async hashPassword(plain) {
+    if (!plain) return '';
+    const buf = new TextEncoder().encode(plain);
+    const hashBuf = await crypto.subtle.digest('SHA-256', buf);
+    return Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2, '0')).join('');
   }
 };

@@ -24,18 +24,21 @@ async function checkProStatus() {
 
 // --- Install / Update ---
 
-chrome.runtime.onInstalled.addListener(async () => {
+chrome.runtime.onInstalled.addListener(async (details) => {
   await Storage.init();
   chrome.alarms.create('smartDecay', { periodInMinutes: 24 * 60 });
 
-  // Reset curiosity prompt counter on install/update — clears stale counts
-  // from testing sessions so free users see the teaser again
-  try {
-    const onboarding = await Storage.getOnboarding();
-    onboarding.interestPromptCount = 0;
-    await chrome.storage.local.set({ onboarding });
-  } catch (e) {
-    console.warn('CleanFeed: failed to reset interest prompt count:', e);
+  // Reset the curiosity prompt counter ONLY on first install. Previously this
+  // also fired on every update, resurrecting the 3-prompt free teaser every
+  // patch release — so paying-eligible users saw the upgrade nag forever.
+  if (details && details.reason === 'install') {
+    try {
+      const onboarding = await Storage.getOnboarding();
+      onboarding.interestPromptCount = 0;
+      await chrome.storage.local.set({ onboarding });
+    } catch (e) {
+      console.warn('CleanFeed: failed to reset interest prompt count:', e);
+    }
   }
 });
 
@@ -114,8 +117,160 @@ async function handleMessage(request) {
     }
 
     case 'removeKeyword': {
+      // Capture the keyword name BEFORE removing so we can wipe its auto-tag data
+      const keywords = await Storage.getBlockedKeywords();
+      const target = keywords[request.index];
       await Storage.removeBlockedKeyword(request.index);
+      if (target?.keyword) await Storage.clearCategoryData(target.keyword.toLowerCase());
       return { success: true };
+    }
+
+    // --- Category Auto-Tag ---
+    // Body: hits = [["category::channelLower", count], ...]
+    // Previously this looped `count` times calling Storage.incrementCategoryHit
+    // → that did one storage read + write PER hit. With dozens of hidden videos
+    // across multiple channels it became 100+ storage operations which Chrome's
+    // service worker timed out on, leaving an "Unhandled case: [object Object]"
+    // in the extension error log. Now: single read, batched mutation, single write.
+    case 'batchIncrementCategoryHits': {
+      const inputHits = Array.isArray(request.hits) ? request.hits : [];
+      if (inputHits.length === 0) return { success: true, newlyTagged: [] };
+
+      const allHits = await Storage.getCategoryHits();
+      const allTags = await Storage.getCategoryTags();
+      const newlyTagged = [];
+
+      for (const [key, count] of inputHits) {
+        if (typeof key !== 'string') continue;
+        const idx = key.indexOf('::');
+        if (idx < 0) continue;
+        const cat = key.slice(0, idx).trim();
+        const ch = key.slice(idx + 2).trim();
+        if (!cat || !ch || !count || count <= 0) continue;
+
+        if (!allHits[cat]) allHits[cat] = {};
+        allHits[cat][ch] = (allHits[cat][ch] || 0) + count;
+
+        if (allHits[cat][ch] >= Storage.CATEGORY_TAG_THRESHOLD) {
+          if (!allTags[cat]) allTags[cat] = [];
+          if (!allTags[cat].includes(ch)) {
+            allTags[cat].push(ch);
+            newlyTagged.push({ category: cat, channel: ch });
+          }
+        }
+      }
+
+      await chrome.storage.local.set({ categoryHits: allHits, categoryTags: allTags });
+      return { success: true, newlyTagged };
+    }
+
+    case 'untagChannelForCategory': {
+      await Storage.untagChannelForCategory(request.category, request.channelName);
+      return { success: true };
+    }
+
+    case 'clearCategoryData': {
+      await Storage.clearCategoryData(request.category);
+      return { success: true };
+    }
+
+    // Wholesale replace of categoryTags — used by the content script's
+    // garbage-collection pass (removes entries created before the channel-name
+    // validation was added). Also wipes matching categoryHits so the bad
+    // channels can't re-create themselves the next time we filter.
+    case 'replaceCategoryTags': {
+      const newTags = request.tags || {};
+      const oldHits = await Storage.getCategoryHits();
+
+      // For each category, keep only hits whose channel survived in the new tags
+      // OR whose channel name is still valid (i.e. legitimate sub-threshold hits)
+      const newHits = {};
+      for (const [cat, channelMap] of Object.entries(oldHits)) {
+        if (!channelMap || typeof channelMap !== 'object') continue;
+        const keepChannels = {};
+        for (const [ch, count] of Object.entries(channelMap)) {
+          // Tag-valid channel survives even at any count; otherwise it must
+          // pass a basic sanity check.
+          const tagHas = Array.isArray(newTags[cat]) && newTags[cat].includes(ch);
+          const valid = ch && ch.length >= 2 && /[a-zA-ZÀ-ſ]/.test(ch);
+          if (tagHas || valid) keepChannels[ch] = count;
+        }
+        if (Object.keys(keepChannels).length > 0) newHits[cat] = keepChannels;
+      }
+      await chrome.storage.local.set({ categoryTags: newTags, categoryHits: newHits });
+      return { success: true };
+    }
+
+    // --- Bulk add (used by channel scan modal) ---
+    // Takes [{ type: 'keyword'|'synonym', phrase, category? }] and applies
+    // them in a SINGLE storage write per bucket. Sequential per-item calls
+    // were taking ~30s with 15-20 selections because each one triggered a
+    // storage.onChanged cascade (state refetch + filterPage + …).
+    case 'bulkAddBlockingTerms': {
+      const items = Array.isArray(request.items) ? request.items : [];
+      let addedKw = 0, addedSyn = 0, skippedFree = 0, duplicates = 0;
+
+      const keywords = await Storage.getBlockedKeywords();
+      const customs = await Storage.getCustomSynonyms();
+      const existingKw = new Set(keywords.map(k => k.keyword.toLowerCase()));
+
+      for (const item of items) {
+        if (!item || !item.phrase) continue;
+        const phrase = item.phrase.toLowerCase().trim();
+        if (!phrase) continue;
+
+        if (item.type === 'keyword') {
+          if (existingKw.has(phrase)) { duplicates++; continue; }
+          if (!isPro && keywords.length >= Storage.FREE_KEYWORD_LIMIT) {
+            skippedFree++; continue;
+          }
+          keywords.push({ keyword: phrase, addedAt: Date.now() });
+          existingKw.add(phrase);
+          addedKw++;
+        } else if (item.type === 'synonym' && item.category) {
+          const cat = item.category;
+          if (!customs[cat]) customs[cat] = [];
+          if (customs[cat].includes(phrase)) { duplicates++; continue; }
+          customs[cat].push(phrase);
+          addedSyn++;
+        }
+      }
+
+      // Single storage write covering BOTH buckets — one storage.onChanged
+      // cascade total, not one per item.
+      const writes = {};
+      if (addedKw > 0) writes.blockedKeywords = keywords;
+      if (addedSyn > 0) writes.customSynonyms = customs;
+      if (Object.keys(writes).length > 0) {
+        await chrome.storage.local.set(writes);
+      }
+
+      return { addedKw, addedSyn, skippedFree, duplicates };
+    }
+
+    // --- Preset Profiles ---
+    // Bulk-add a curated set of category keys as blocked keywords in one
+    // storage write. Categories already blocked are silently skipped.
+    case 'applyPreset': {
+      const keys = Array.isArray(request.categoryKeys) ? request.categoryKeys : [];
+      if (keys.length === 0) return { success: false, error: 'empty_preset' };
+
+      const existing = await Storage.getBlockedKeywords();
+      const existingSet = new Set(existing.map(k => k.keyword.toLowerCase()));
+      const toAdd = keys.filter(k => !existingSet.has(k.toLowerCase()));
+
+      // Check free limit
+      if (!isPro && (existing.length + toAdd.length) > Storage.FREE_KEYWORD_LIMIT) {
+        return { success: false, reason: 'free_limit', wouldAdd: toAdd.length, currentCount: existing.length };
+      }
+
+      let added = 0;
+      for (const k of toAdd) {
+        existing.push({ keyword: k.toLowerCase(), addedAt: Date.now() });
+        added++;
+      }
+      if (added > 0) await chrome.storage.local.set({ blockedKeywords: existing });
+      return { success: true, added, alreadyBlocked: keys.length - added };
     }
 
     // --- Synonym Management ---
@@ -216,6 +371,7 @@ async function handleMessage(request) {
       const whitelistedChannels = await Storage.getWhitelistedChannels();
       const disabledSynonyms = await Storage.getDisabledSynonyms();
       const customSynonyms = await Storage.getCustomSynonyms();
+      const categoryTags = await Storage.getCategoryTags();
       const interests = await Storage.getInterests();
       const hiddenVideos = await Storage.getHiddenVideos();
       const onboarding = await Storage.getOnboarding();
@@ -223,7 +379,7 @@ async function handleMessage(request) {
       return {
         settings, stats, blockedChannels, blockedKeywords,
         whitelistedChannels, disabledSynonyms, customSynonyms,
-        interests, hiddenVideos, onboarding, isPro
+        categoryTags, interests, hiddenVideos, onboarding, isPro
       };
     }
 
@@ -245,6 +401,16 @@ async function handleMessage(request) {
       return { success: true };
     }
 
+    // --- Daily Time Tracking ---
+    case 'addTimeUsed': {
+      return await Storage.addTimeUsed(request.seconds);
+    }
+
+    case 'getTimeUsed': {
+      const secs = await Storage.getTimeUsed();
+      return { secondsUsed: secs };
+    }
+
     // --- Payment ---
     case 'openPaymentPage': {
       try {
@@ -253,6 +419,75 @@ async function handleMessage(request) {
       } catch (e) {
         console.warn('CleanFeed: payment page error:', e);
       }
+      return { success: true };
+    }
+
+    // --- Export / Import ---
+    case 'exportAllData': {
+      const blockedChannels = await Storage.getBlockedChannels();
+      const blockedKeywords = await Storage.getBlockedKeywords();
+      const customSynonyms = await Storage.getCustomSynonyms();
+      const disabledSynonyms = await Storage.getDisabledSynonyms();
+      const whitelistedChannels = await Storage.getWhitelistedChannels();
+      const interests = await Storage.getInterests();
+      const settings = await Storage.getSettings();
+      const categoryTags = await Storage.getCategoryTags();
+      return {
+        cleanfeedVersion: chrome.runtime.getManifest().version,
+        exportedAt: Date.now(),
+        blockedChannels, blockedKeywords, customSynonyms, disabledSynonyms,
+        whitelistedChannels, interests, settings, categoryTags
+      };
+    }
+
+    case 'importAllData': {
+      const data = request.data || {};
+      // Validate top-level keys are objects/arrays as expected
+      if (!data || typeof data !== 'object') return { success: false, error: 'invalid_format' };
+      const updates = {};
+      if (Array.isArray(data.blockedChannels)) updates.blockedChannels = data.blockedChannels;
+      if (Array.isArray(data.blockedKeywords)) updates.blockedKeywords = data.blockedKeywords;
+      if (data.customSynonyms && typeof data.customSynonyms === 'object') updates.customSynonyms = data.customSynonyms;
+      if (Array.isArray(data.disabledSynonyms)) updates.disabledSynonyms = data.disabledSynonyms;
+      if (Array.isArray(data.whitelistedChannels)) updates.whitelistedChannels = data.whitelistedChannels;
+      if (data.interests && typeof data.interests === 'object') updates.interests = data.interests;
+      if (data.settings && typeof data.settings === 'object') {
+        // Merge incoming settings with existing defaults so missing fields don't break
+        const cur = await Storage.getSettings();
+        updates.settings = { ...cur, ...data.settings };
+      }
+      if (data.categoryTags && typeof data.categoryTags === 'object') updates.categoryTags = data.categoryTags;
+      await chrome.storage.local.set(updates);
+      return { success: true, imported: Object.keys(updates) };
+    }
+
+    // --- Strict Mode ---
+    case 'verifyStrictPassword': {
+      const settings = await Storage.getSettings();
+      if (!settings.strictModeEnabled) return { valid: true };
+      if (!settings.strictModePasswordHash) return { valid: true };
+      const hash = await Storage.hashPassword(request.password || '');
+      return { valid: hash === settings.strictModePasswordHash };
+    }
+
+    case 'setStrictPassword': {
+      const hash = await Storage.hashPassword(request.password || '');
+      const settings = await Storage.getSettings();
+      settings.strictModePasswordHash = hash;
+      settings.strictModeEnabled = true;
+      await chrome.storage.local.set({ settings });
+      return { success: true };
+    }
+
+    case 'disableStrictMode': {
+      const settings = await Storage.getSettings();
+      if (settings.strictModeEnabled && settings.strictModePasswordHash) {
+        const submittedHash = await Storage.hashPassword(request.password || '');
+        if (submittedHash !== settings.strictModePasswordHash) return { success: false, reason: 'wrong_password' };
+      }
+      settings.strictModeEnabled = false;
+      settings.strictModePasswordHash = '';
+      await chrome.storage.local.set({ settings });
       return { success: true };
     }
 

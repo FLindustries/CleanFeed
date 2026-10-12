@@ -11,7 +11,13 @@
     <!-- Header -->
     <header class="header">
       <div class="header-left">
-        <div class="cf-logo">CF</div>
+        <div class="cf-logo">
+          <svg width="15" height="13" viewBox="0 0 15 13" fill="none" aria-hidden="true">
+            <rect x="0" y="0" width="15" height="2.4" rx="1.2" fill="white"/>
+            <rect x="2.5" y="4.8" width="10" height="2.4" rx="1.2" fill="white"/>
+            <rect x="5.5" y="9.6" width="4" height="2.4" rx="1.2" fill="white"/>
+          </svg>
+        </div>
         <h1 class="header-title">CleanFeed</h1>
         <span class="header-badge" id="planBadge">FREE</span>
       </div>
@@ -27,6 +33,7 @@
       <button class="nav-item" data-section="topics" data-i18n="topicsAndKeywords">Topics &amp; Keywords</button>
       <button class="nav-item" data-section="hidden" data-i18n="hiddenVideos">Hidden Videos</button>
       <button class="nav-item" data-section="interests" data-i18n="interests">Interests</button>
+      <button class="nav-item" data-section="stats" data-i18n="statsTab">Stats</button>
       <button class="nav-item" data-section="about" data-i18n="aboutAndSupport">About &amp; Support</button>
     </nav>
 
@@ -35,6 +42,13 @@
       <!-- Settings -->
       <section class="section active" id="section-settings">
         <h2 data-i18n="controls">Settings</h2>
+
+        <div class="presets-section">
+          <h3 data-i18n="presetsTitle">Quick presets</h3>
+          <p class="section-desc" data-i18n="presetsDesc">One-click bundles to block common content groups.</p>
+          <div id="presets-grid" class="presets-grid"></div>
+        </div>
+
         <div id="settings-list"></div>
       </section>
 
@@ -74,6 +88,15 @@
         <div id="interest-list"></div>
       </section>
 
+      <!-- Stats -->
+      <section class="section" id="section-stats">
+        <h2 data-i18n="statsTitle">Your CleanFeed stats</h2>
+        <p class="section-desc" data-i18n="statsDesc">What CleanFeed has filtered for you so far</p>
+        <div id="stats-cards" class="stats-cards"></div>
+        <h3 data-i18n="statsCategoryBreakdown">Top blocked categories</h3>
+        <div id="stats-categories" class="stats-categories"></div>
+      </section>
+
       <!-- About & Support -->
       <section class="section" id="section-about">
         <h2 data-i18n="aboutAndSupport">About &amp; Support</h2>
@@ -82,6 +105,22 @@
           <h3>CleanFeed</h3>
           <p data-i18n="extensionDescription">YouTube That Respects You. Permanent channel blocking, keyword filtering, interest boundaries, and Shorts removal.</p>
           <p class="muted" id="aboutVersion"></p>
+        </div>
+
+        <div class="about-card">
+          <h3 data-i18n="resetRecsTitle">Reset YouTube recommendations</h3>
+          <p data-i18n="resetRecsDesc">Opens YouTube's history pages so you can clear the data that feeds the algorithm. This breaks the recommendation loop in seconds.</p>
+          <button class="btn btn-secondary" id="resetRecsBtn" data-i18n="resetRecsBtn">Reset recommendations</button>
+        </div>
+
+        <div class="about-card">
+          <h3 data-i18n="exportImportTitle">Export / Import settings</h3>
+          <p data-i18n="exportImportDesc">Back up your CleanFeed configuration or restore it on another device.</p>
+          <div style="display:flex; gap:8px; margin-top:12px; flex-wrap:wrap;">
+            <button class="btn btn-secondary" id="exportBtn" data-i18n="exportBtnLabel">Export JSON</button>
+            <input type="file" id="importInput" accept="application/json" style="display:none;">
+            <button class="btn btn-secondary" id="importBtn" data-i18n="importBtnLabel">Import JSON</button>
+          </div>
         </div>
 
         <div class="about-card">

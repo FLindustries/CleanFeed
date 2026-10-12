@@ -15,3 +15,6 @@ Thumbs.db
 
 # Stray / temp files
 *_committed.js
+
+# Tool artifacts
+.playwright-mcp/

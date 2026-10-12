@@ -92,9 +92,12 @@ function renderBadge() {
 }
 
 function renderStats() {
-  document.getElementById('statBlocked').textContent = state.stats?.channelsBlocked || 0;
-  document.getElementById('statHidden').textContent = state.stats?.videosHidden || 0;
-  document.getElementById('statInterests').textContent = state.stats?.interestsSaved || 0;
+  const b = document.getElementById('statBlocked');
+  const h = document.getElementById('statHidden');
+  const i = document.getElementById('statInterests');
+  if (b) b.textContent = state.stats?.channelsBlocked || 0;
+  if (h) h.textContent = state.stats?.videosHidden || 0;
+  if (i) i.textContent = state.stats?.interestsSaved || 0;
 }
 
 function renderControls() {
