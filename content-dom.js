@@ -296,19 +296,56 @@ function getMenuInjectionAction(itemTokens, clickToken, clickAgeMs) {
 
 // --- Keyword Matching ---
 
+// Normalizes text and keywords for matching: lowercase, NFC, and typographic
+// apostrophes (U+2018 U+2019 U+02BC) folded to a plain '. Diacritics are kept
+// on purpose: "citta" must not match "città" (nor Spanish "ano" match "año").
+function cfNormalizeForMatch(value) {
+  return String(value).toLowerCase().normalize('NFC').replace(/[\u2018\u2019\u02BC]/g, "'");
+}
+
+// A "word character" is any letter, combining mark, digit or underscore of any
+// script. The regex \b only knows [A-Za-z0-9_], so it can't be used for "città",
+// "игры" or "먹방", and it fails at the edges of keywords such as "c++".
+const CF_WORD_CHARS = '\\p{L}\\p{M}\\p{N}_';
+const CF_KEYWORD_CACHE_MAX = 2000;
+// raw keyword -> { normalized, regex }; the regex is built the first time the
+// keyword actually occurs in a text.
+const _cfKeywordCache = new Map();
+// Callers test one title against hundreds of terms in a row, so the normalized
+// form of the last text is kept instead of being recomputed for every term.
+let _cfLastMatchText = null;
+let _cfLastMatchNormalized = '';
+
+function cfKeywordEntry(keyword) {
+  let entry = _cfKeywordCache.get(keyword);
+  if (!entry) {
+    entry = { normalized: cfNormalizeForMatch(keyword), regex: null };
+    if (_cfKeywordCache.size >= CF_KEYWORD_CACHE_MAX) _cfKeywordCache.clear();
+    _cfKeywordCache.set(keyword, entry);
+  }
+  return entry;
+}
+
 function matchesKeyword(text, keyword) {
   if (!text || !keyword) return false;
-  const lowerText = text.toLowerCase();
-  const lowerKw = keyword.toLowerCase();
-
-  // Word-boundary match for ALL lengths. Previously ≥4 chars used substring
-  // which gave false positives: "game" → "endgame", "play" → "display"ed,
-  // "tea" → "team". Word boundaries respect natural word edges in all langs.
-  const escaped = lowerKw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  // For multi-word phrases (e.g. "assassin's creed") allow flexible spacing
-  // but still anchor at outer word boundaries.
-  const regex = new RegExp('\\b' + escaped + '\\b');
-  return regex.test(lowerText);
+  if (text !== _cfLastMatchText) {
+    _cfLastMatchText = text;
+    _cfLastMatchNormalized = cfNormalizeForMatch(text);
+  }
+  const entry = cfKeywordEntry(keyword);
+  // Cheap reject first: nearly every term is absent from a given title, and a
+  // Unicode regex test is several times slower than a substring search.
+  if (!_cfLastMatchNormalized.includes(entry.normalized)) return false;
+  if (!entry.regex) {
+    // Whole-word match for ALL lengths ("game" must not hit "endgame", "play"
+    // must not hit "display", "tea" must not hit "team"). A multi-word phrase
+    // (e.g. "assassin's creed") is matched literally and anchored at its outer
+    // edges only.
+    const escaped = entry.normalized.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    entry.regex = new RegExp(
+      '(?<![' + CF_WORD_CHARS + '])' + escaped + '(?![' + CF_WORD_CHARS + '])', 'u');
+  }
+  return entry.regex.test(_cfLastMatchNormalized);
 }
 
 // --- Category Exemptions ---
@@ -358,8 +395,12 @@ const CATEGORY_EXEMPTIONS = {
   ]
 };
 
+// Exemptions belong to category blocks only: a plain keyword (even one that is
+// a synonym of a category, like "minecraft") is never exempted. Own-property
+// check so a keyword such as "constructor" can't hit Object.prototype.
 function isCategoryExempt(title, category) {
   if (!title || !category) return false;
+  if (!Object.prototype.hasOwnProperty.call(CATEGORY_EXEMPTIONS, category)) return false;
   const exemptions = CATEGORY_EXEMPTIONS[category];
   if (!exemptions || exemptions.length === 0) return false;
   const lower = title.toLowerCase();
@@ -370,20 +411,27 @@ function isCategoryExempt(title, category) {
 }
 
 // --- Keyword Synonym Map ---
-// When a user blocks "crypto", we also block "bitcoin", "ethereum", etc.
-// This turns literal keyword blocking into topic-level blocking.
+// When a user blocks the topic "crypto", we also block "bitcoin", "ethereum", etc.
+// This turns literal keyword blocking into topic-level blocking. Only a keyword
+// that is a category key (see getExpandedKeywords) expands; blocking "bitcoin"
+// on its own blocks just "bitcoin".
+//
+// Terms are matched word-for-word, so a standalone everyday word ("tea", "slot",
+// "persona", "partita") would hide unrelated videos for everyone who turns the
+// topic on. Use an unambiguous phrase instead ("spill the tea", "slot machine")
+// or leave the word out.
 
 const KEYWORD_SYNONYMS = {
-  crypto: ['bitcoin', 'ethereum', 'blockchain', 'solana', 'nft', 'defi', 'binance', 'coinbase', 'altcoin', 'web3', 'dogecoin', 'shiba inu', 'trading crypto', 'criptovalute', 'criptovaluta'],
-  gambling: ['casino', 'slot', 'poker', 'betting', 'scommesse', 'roulette', 'blackjack', 'stake', 'slot machine'],
-  politics: ['politica', 'election', 'elezioni', 'trump', 'biden', 'parliament', 'parlamento', 'democrat', 'republican', 'sinistra', 'destra', 'governo', 'senato'],
-  gossip: ['drama', 'tea', 'exposed', 'scandalo', 'pettegolezzo', 'beef', 'cancelled', 'drammatico'],
-  asmr: ['whisper', 'tingles', 'soft spoken', 'mouth sounds', 'tapping asmr'],
+  crypto: ['bitcoin', 'ethereum', 'blockchain', 'solana', 'nft', 'defi', 'binance', 'coinbase', 'altcoin', 'web3', 'dogecoin', 'shiba inu coin', 'trading crypto', 'criptovalute', 'criptovaluta'],
+  gambling: ['casino', 'poker', 'betting', 'scommesse', 'roulette', 'blackjack', 'stake casino', 'slot machine'],
+  politics: ['politica', 'election', 'elezioni', 'trump', 'biden', 'parliament', 'parlamento', 'democrat', 'republican', 'senato'],
+  gossip: ['youtube drama', 'youtuber drama', 'drama alert', 'creator drama', 'spill the tea', 'youtuber exposed', 'scandalo', 'pettegolezzo', 'youtuber beef', 'cancel culture', 'drammatico'],
+  asmr: ['whispering asmr', 'tingles', 'soft spoken', 'mouth sounds', 'tapping asmr'],
   mukbang: ['eating show', 'food challenge', 'eating challenge', 'mangiata'],
-  pranks: ['prank', 'scherzo', 'scherzi', 'candid camera', 'social experiment'],
+  pranks: ['prank', 'scherzo telefonico', 'scherzi telefonici', 'candid camera', 'social experiment'],
   astrology: ['astrologia', 'horoscope', 'oroscopo', 'zodiac', 'zodiaco', 'tarot', 'tarocchi', 'segno zodiacale'],
   conspiracy: ['complotto', 'complottismo', 'flat earth', 'terra piatta', 'illuminati', 'new world order', 'qanon', 'no vax'],
-  nsfw: ['onlyfans', 'thirst trap', 'hot tub', 'bikini haul', 'try on haul', 'lingerie', 'sexy'],
+  nsfw: ['onlyfans', 'thirst trap', 'hot tub stream', 'bikini haul', 'try on haul', 'lingerie', 'sexy'],
   clickbait: ['you wont believe', 'non crederai', 'gone wrong', 'shocking', 'jaw dropping', 'incredibile'],
   // Strategy: include common gaming words (incl. Italian gioco/giochi/giocare
   // and "gaming") to maximize coverage, then rely on CATEGORY_EXEMPTIONS to
@@ -392,18 +440,20 @@ const KEYWORD_SYNONYMS = {
   //   "game"/"games" → "Squid Game", "Hunger Games", "endgame"
   //   "destiny"/"halo"/"mario" → too many non-gaming homonyms
   //   "remake"/"remaster" → movie remakes too
+  // Franchise names that are also everyday words appear only as unambiguous
+  // phrases: "persona 5", "forza horizon", "sonic the hedgehog", "the sims".
   gaming: ['gaming', 'gameplay', 'walkthrough', 'playthrough', 'lets play', "let's play", 'speedrun', 'esports', 'twitch streamer', 'fortnite', 'minecraft', 'gta v', 'gta 6', 'call of duty', 'valorant', 'league of legends', 'elden ring', 'dark souls', 'ps5', 'ps4', 'xbox', 'nintendo', 'playstation', 'videogiochi', 'videogioco', 'gamer', 'gioco', 'giochi', 'giocare', 'giocato', 'boss fight', 'dead space', 'system shock', 'resident evil', 'death stranding', 'cyberpunk 2077', 'zelda', 'pokemon', 'apex legends', 'overwatch', 'god of war', 'final fantasy', 'steam deck', 'epic games store', 'mmorpg', 'sala giochi', 'video game', 'pc gaming', 'mass effect', 'bioware', 'roblox', 'among us', 'tetris',
     // Major franchises (added 2026-05 to catch titles that don't contain "gaming")
     'assassin\'s creed', 'assassins creed', 'witcher', 'skyrim', 'bloodborne', 'sekiro',
     'hollow knight', 'cuphead', 'stardew', 'terraria', 'valheim', 'battlefield',
-    'mario kart', 'smash bros', 'splatoon', 'animal crossing', 'sonic', 'crash bandicoot',
+    'mario kart', 'smash bros', 'splatoon', 'animal crossing', 'sonic the hedgehog', 'crash bandicoot',
     'spider-man', 'hogwarts legacy', 'baldur\'s gate', 'baldurs gate', 'diablo',
     'world of warcraft', 'wow classic', 'path of exile', 'hearthstone', 'genshin',
-    'honkai', 'wuthering waves', 'sims', 'cities skylines', 'civilization',
+    'honkai', 'wuthering waves', 'the sims', 'cities skylines', 'civilization',
     'total war', 'age of empires', 'stellaris', 'crusader kings', 'football manager',
-    'fifa', 'efootball', 'nba 2k', 'madden', 'forza', 'gran turismo',
+    'fifa', 'efootball', 'nba 2k', 'madden', 'forza horizon', 'forza motorsport', 'gran turismo',
     'silent hill', 'starfield', 'jedi survivor', 'jedi fallen order', 'star wars outlaws',
-    'kingdom hearts', 'persona', 'tekken', 'mortal kombat', 'street fighter',
+    'kingdom hearts', 'persona 5', 'tekken', 'mortal kombat', 'street fighter',
     'metal gear', 'red dead', 'rdr2', 'horizon zero dawn', 'horizon forbidden',
     'last of us', 'uncharted', 'ghost of tsushima', 'returnal', 'helldivers',
     'palworld', 'lethal company', 'expedition 33', 'space marine',
@@ -420,11 +470,11 @@ const KEYWORD_SYNONYMS = {
     'patch notes', 'season pass', 'open beta', 'closed beta',
     'finale del gioco', 'fine del gioco', 'finito il gioco', 'completato al 100',
     'tutti i finali', 'all endings', 'platino del', 'trofei', 'achievements unlocked'],
-  kpop: ['k-pop', 'bts', 'blackpink', 'stray kids', 'twice', 'aespa', 'enhypen', 'seventeen', 'k pop'],
+  kpop: ['k-pop', 'bts', 'blackpink', 'stray kids', 'twice kpop', 'aespa', 'enhypen', 'seventeen kpop', 'k pop'],
   anime: ['manga', 'otaku', 'one piece', 'naruto', 'demon slayer', 'jujutsu kaisen', 'attack on titan', 'dragon ball', 'shonen', 'crunchyroll'],
   diet: ['weight loss', 'dimagrire', 'perdere peso', 'calorie deficit', 'keto', 'intermittent fasting', 'digiuno', 'dieta'],
   hustle: ['side hustle', 'passive income', 'reddito passivo', 'dropshipping', 'affiliate marketing', 'make money online', 'guadagnare online', 'soldi facili'],
-  horror: ['creepypasta', 'scary', 'paura', 'terrore', 'jump scare', 'horror story'],
+  horror: ['creepypasta', 'scary', 'terrore', 'jump scare', 'horror story'],
   true_crime: ['true crime', 'murder', 'omicidio', 'serial killer', 'cold case', 'crime documentary', 'caso irrisolto', 'cronaca nera'],
   reaction: ['reaction video', 'reacting to', 'first time watching', 'reagisco', 'la mia reazione'],
   unboxing: ['unboxing', 'haul', 'shopping haul', 'what i bought', 'cosa ho comprato'],
@@ -435,7 +485,7 @@ const KEYWORD_SYNONYMS = {
     'back day', 'arm day', 'shoulder workout', 'home workout', 'full body workout',
     'massa muscolare', 'ipertrofia', 'powerlifting', 'gym motivation'],
   beauty: ['makeup tutorial', 'skincare routine', 'contouring', 'foundation routine',
-    'makeup palette', 'lipstick swatches', 'eyeshadow tutorial', 'trucco',
+    'makeup palette', 'lipstick swatches', 'eyeshadow tutorial',
     'fondotinta', 'mascara', 'rossetto', 'get ready with me', 'grwm',
     'morning skincare', 'night skincare', 'sephora haul', 'ulta haul',
     'beauty routine', 'pelle perfetta', 'tutorial trucco', 'beauty guru',
@@ -450,7 +500,7 @@ const KEYWORD_SYNONYMS = {
     'city tour', 'vlog viaggio', 'road trip italia', 'in viaggio', 'travel guide',
     'travel diary', 'travel itinerary', 'backpacking', 'solo travel', 'digital nomad',
     'van life', 'vita da nomadi', 'guida turistica', 'tour della città',
-    'cosa vedere a', 'what to do in', 'travel hacks', 'budget travel', 'luxury travel',
+    'cosa vedere a', 'travel hacks', 'budget travel', 'luxury travel',
     'island hopping', 'cruise vlog'],
   food: ['recipe', 'cooking tutorial', 'cook with me', 'food vlog', 'ricetta',
     'ricette', 'cucinare', 'in cucina', 'easy meal', 'meal prep', 'what i eat in a day',
@@ -464,7 +514,7 @@ const KEYWORD_SYNONYMS = {
     'rolls royce', 'maserati', 'auto elettrica', 'electric car review', 'horsepower',
     'cavalli motore', 'cabrio', 'coupe review'],
   sports: ['nba', 'ufc', 'mma', 'boxe', 'boxing match', 'formula 1', 'f1 race',
-    'premier league', 'champions league', 'mondiali', 'sports highlights', 'partita',
+    'premier league', 'champions league', 'mondiali', 'sports highlights',
     'nfl highlights', 'nba highlights', 'wwe', 'wrestling match', 'serie a highlights',
     'la liga', 'bundesliga', 'tennis match', 'wimbledon', 'roland garros',
     'us open tennis', 'australian open', 'motogp', 'rally race', 'olimpiadi',
@@ -485,9 +535,9 @@ const KEYWORD_SYNONYMS = {
     'morning news', 'live news', 'notizie di oggi', 'world news today', 'tg5',
     'tg la7', 'news in 5 minutes', 'news update', 'cnn news', 'bbc news',
     'fox news', 'msnbc'],
-  religion: ['sermon', 'bible study', 'pastor', 'predica', 'vangelo', 'gospel music',
-    'preghiera', 'cristiano', 'ramadan', 'islamic lecture',
-    'sunday service', 'church service', 'rosario', 'catechesi', 'meditazione cristiana',
+  religion: ['sermon', 'bible study', 'predica', 'vangelo', 'gospel music',
+    'preghiera', 'ramadan', 'islamic lecture',
+    'sunday service', 'church service', 'santo rosario', 'catechesi', 'meditazione cristiana',
     'lettura biblica', 'studio biblico', 'fede cristiana', 'parola di dio',
     'predicazione', 'omelia', 'santa messa', 'preghiera mariana', 'imam lecture'],
   parenting: ['mom life', 'family vlog', 'parenting tips', 'dad life', 'mom vlog',
@@ -525,21 +575,21 @@ function cfSetSynonymFilters(disabledArray, customObj) {
   _cfCustomSynonyms = customObj || {};
 }
 
+// Only a keyword that IS a category key expands to the category's terms.
+// Blocking a word that merely appears in a category's synonym list ("minecraft",
+// "nba", "tea") blocks just that word, not the whole topic.
 function getExpandedKeywords(keyword) {
   const lower = keyword.toLowerCase();
-  for (const [category, synonyms] of Object.entries(KEYWORD_SYNONYMS)) {
-    if (lower === category || synonyms.includes(lower)) {
-      // Start with built-in synonyms, filter out disabled ones
-      const expanded = [category, ...synonyms].filter(s => !_cfDisabledSynonyms.has(s));
-      // Add custom synonyms for this category
-      const customs = _cfCustomSynonyms[category] || [];
-      for (const cs of customs) {
-        if (!expanded.includes(cs) && !_cfDisabledSynonyms.has(cs)) {
-          expanded.push(cs);
-        }
-      }
-      return expanded;
+  if (!Object.prototype.hasOwnProperty.call(KEYWORD_SYNONYMS, lower)) return [lower];
+  // Start with built-in synonyms (deduplicated), filter out disabled ones
+  const expanded = [...new Set([lower, ...KEYWORD_SYNONYMS[lower]])]
+    .filter(s => !_cfDisabledSynonyms.has(s));
+  // Add custom synonyms for this category
+  const customs = Array.isArray(_cfCustomSynonyms[lower]) ? _cfCustomSynonyms[lower] : [];
+  for (const cs of customs) {
+    if (!expanded.includes(cs) && !_cfDisabledSynonyms.has(cs)) {
+      expanded.push(cs);
     }
   }
-  return [lower];
+  return expanded;
 }

@@ -44,12 +44,14 @@ test('matchesKeyword matches multi-word phrases and escapes regex characters', (
   assert.strictEqual(matchesKeyword('', 'anything'), false);
 });
 
-test('getExpandedKeywords expands a category name and any of its synonyms', () => {
+test('getExpandedKeywords expands a category name, but not a mere synonym of it', () => {
   const { getExpandedKeywords } = loadContentDom();
   const fromCategory = plain(getExpandedKeywords('crypto'));
   assert.strictEqual(fromCategory[0], 'crypto');
   assert.ok(fromCategory.includes('bitcoin'));
-  assert.ok(plain(getExpandedKeywords('bitcoin')).includes('ethereum'));
+  assert.ok(fromCategory.includes('ethereum'));
+  // Blocking "bitcoin" on its own blocks just "bitcoin" (audit #9)
+  assert.deepStrictEqual(plain(getExpandedKeywords('bitcoin')), ['bitcoin']);
 });
 
 test('getExpandedKeywords returns just the lowercased keyword when it is not a category', () => {

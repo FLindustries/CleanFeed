@@ -1092,7 +1092,10 @@
     for (const kw of blockedKeywords) {
       const expandedTerms = getExpandedKeywords(kw.keyword);
       for (const term of expandedTerms) {
-        if (matchesKeyword(title, term)) return expandedTerms[0];
+        // The blocked keyword itself: a category key for a topic block, the
+        // plain word otherwise (expandedTerms[0] is not reliable when the
+        // category word itself is a disabled synonym).
+        if (matchesKeyword(title, term)) return kw.keyword.toLowerCase();
       }
     }
     return null;
@@ -2511,15 +2514,12 @@
   }
 
   // Map a user-blocked keyword to its canonical category (gaming, anime, ...).
-  // The user may block "uncharted" (which is a synonym of "gaming"); we still
-  // want to talk about it as "gaming" in the scan UI.
+  // Only a keyword that IS a category key names a category. Blocking
+  // "uncharted" (a synonym of "gaming") blocks just that word, so it is a
+  // standalone keyword, not "gaming"; callers check KEYWORD_SYNONYMS[result]
+  // to tell a category from a standalone keyword.
   function canonicalCategoryOf(userKeyword) {
-    const lower = userKeyword.toLowerCase();
-    if (!KEYWORD_SYNONYMS) return lower;
-    for (const [cat, syns] of Object.entries(KEYWORD_SYNONYMS)) {
-      if (lower === cat || syns.includes(lower)) return cat;
-    }
-    return lower; // standalone keyword with no category — use as-is
+    return userKeyword.toLowerCase();
   }
 
   // Strip diacritics so "pokémon" matches "pokemon" etc.
