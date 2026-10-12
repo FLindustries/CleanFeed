@@ -740,13 +740,24 @@ const CF_ELISION_RE = /^(\p{L}+)['\u2018\u2019\u02BC](?=[\p{L}\p{N}]{2})/u;
 // ends where matchesKeyword accepts a word edge.
 const CF_TOKEN_CORE_RE = new RegExp('[' + CF_WORD_CHARS + '](?:.*[' + CF_WORD_CHARS + '])?', 'u');
 
+// Separators that end a word when they are glued to it without a space:
+// "Zelda/Mario", "Zelda—Mario", "Zelda--Mario", "Wait...Minecraft", "#shorts#fyp",
+// "Gate|Review". Apostrophes, single hyphens, single dots, & + and _ are not
+// here: they stay inside a word ("baldur's", "spider-man", "node.js", "q&a",
+// "c++20"). A single , : or / between two digits belongs to the number ("24/7",
+// "10:30", "1,000").
+const CF_TOKEN_SPLIT_RE = new RegExp(
+  '(?:\\.{2,}|-{2,}|[\\u2026\\u2014\\u2013\\u2015|\\\\;!?#@()\\[\\]{}"\\u201C\\u201D\\u201E\\u00AB\\u00BB]' +
+  '|(?<!\\p{N})[/,:]|[/,:](?!\\p{N}))+', 'gu');
+
 // Splits a title into word tokens, in order:
 //   text       the word as written in the title (edge punctuation trimmed)
 //   key        text in match form: lowercase, NFC, plain apostrophe
 //   start/end  where text sits in the title (title.slice(start, end) === text)
 //   elision    true for the elided article of "dell'anno" ("dell'"); never a keyword
-//   gapBefore  true when a word made only of punctuation ("-", "|", "...") was
-//              dropped between the previous token and this one: no phrase may
+//   gapBefore  true when a separator sits between the previous token and this one
+//              (a word made only of punctuation such as "-", "|", "...", or a
+//              separator glued to the words such as "/" or "—"): no phrase may
 //              reach across it
 function cfTokenizeTitle(title) {
   const tokens = [];
@@ -758,24 +769,40 @@ function cfTokenizeTitle(title) {
   while ((run = runs.exec(text)) !== null) {
     const core = CF_TOKEN_CORE_RE.exec(run[0]);
     if (!core || !/[\p{L}\p{N}]/u.test(core[0])) { gap = true; continue; }
-    let start = run.index + core.index;
-    let rest = core[0];
-    for (;;) {
-      const elided = CF_ELISION_RE.exec(rest);
-      if (!elided || !CF_ELISION_PREFIXES.has(elided[1].toLowerCase())) break;
+    // A run holds one word, or several words glued by separators: cut it there
+    const pieces = [];
+    let from = 0;
+    let sep;
+    CF_TOKEN_SPLIT_RE.lastIndex = 0;
+    while ((sep = CF_TOKEN_SPLIT_RE.exec(core[0])) !== null) {
+      pieces.push({ offset: from, text: core[0].slice(from, sep.index) });
+      from = sep.index + sep[0].length;
+    }
+    pieces.push({ offset: from, text: core[0].slice(from) });
+
+    for (let n = 0; n < pieces.length; n++) {
+      if (n > 0) gap = true;
+      const word = CF_TOKEN_CORE_RE.exec(pieces[n].text);
+      if (!word || !/[\p{L}\p{N}]/u.test(word[0])) { gap = true; continue; }
+      let start = run.index + core.index + pieces[n].offset + word.index;
+      let rest = word[0];
+      for (;;) {
+        const elided = CF_ELISION_RE.exec(rest);
+        if (!elided || !CF_ELISION_PREFIXES.has(elided[1].toLowerCase())) break;
+        tokens.push({
+          text: elided[0], key: cfNormalizeForMatch(elided[0]), start, end: start + elided[0].length,
+          elision: true, gapBefore: gap
+        });
+        gap = false;
+        start += elided[0].length;
+        rest = rest.slice(elided[0].length);
+      }
       tokens.push({
-        text: elided[0], key: cfNormalizeForMatch(elided[0]), start, end: start + elided[0].length,
-        elision: true, gapBefore: gap
+        text: rest, key: cfNormalizeForMatch(rest), start, end: start + rest.length,
+        elision: false, gapBefore: gap
       });
       gap = false;
-      start += elided[0].length;
-      rest = rest.slice(elided[0].length);
     }
-    tokens.push({
-      text: rest, key: cfNormalizeForMatch(rest), start, end: start + rest.length,
-      elision: false, gapBefore: gap
-    });
-    gap = false;
   }
   return tokens;
 }

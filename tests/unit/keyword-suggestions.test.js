@@ -40,7 +40,10 @@ test('quick-add: every chip phrase matches the title it came from', () => {
     'Обзор игры Minecraft: новости',
     'Learning C++ fast #shorts',
     'Tour della città di Roma',
-    'Two  spaces\tand a tab between words'
+    'Two  spaces\tand a tab between words',
+    'Zelda/Mario tips #shorts#fyp, Halo—Doom...Quake',
+    "Il gioco/dell'anno—l'ultimo (Spider-Man) [4K]",
+    '24/7 live: 10:30, 1,000 subs; Q&A--"quoted"word'
   ];
   for (const title of titles) {
     const chips = plain(cfQuickAddChips(title));
@@ -325,6 +328,151 @@ test('scan: at most 40 candidates, sorted by count then alphabetically', () => {
   assert.strictEqual(cands.length, 40);
   const sorted = cands.slice().sort((a, b) => b.count - a.count || a.phrase.localeCompare(b.phrase));
   assert.deepStrictEqual(cands, sorted);
+});
+
+// --- Words glued by an unspaced separator ---
+// "Zelda/Mario", "Zelda—Mario", "Wait...Minecraft" and "#shorts#fyp" are two words
+// each, as they were before the tokenizer started keeping inner characters.
+
+function tokenTexts(tokens) {
+  return plain(tokens).map(t => t.text);
+}
+
+test('tokenizer: splits at / \\ | , ; : ! ? # @ brackets, quotes, dashes and ellipsis glued to words', () => {
+  const { cfTokenizeTitle } = loadContentDom();
+  const cases = [
+    ['a/b', ['a', 'b']],
+    ['a\\b', ['a', 'b']],
+    ['a|b', ['a', 'b']],
+    ['a—b', ['a', 'b']],
+    ['a–b', ['a', 'b']],
+    ['a--b', ['a', 'b']],
+    ['a...b', ['a', 'b']],
+    ['a....b', ['a', 'b']],
+    ['a…b', ['a', 'b']],
+    ['a,b', ['a', 'b']],
+    ['a;b', ['a', 'b']],
+    ['a:b', ['a', 'b']],
+    ['a!b', ['a', 'b']],
+    ['a?b', ['a', 'b']],
+    ['#a#b', ['a', 'b']],
+    ['a@b', ['a', 'b']],
+    ['a(b)c', ['a', 'b', 'c']],
+    ['a[b]c{d}e', ['a', 'b', 'c', 'd', 'e']],
+    ['a"b"c', ['a', 'b', 'c']],
+    ['a“b”c«d»e', ['a', 'b', 'c', 'd', 'e']],
+    ['one/two—three...four#five', ['one', 'two', 'three', 'four', 'five']],
+    ['a/ /b', ['a', 'b']]
+  ];
+  for (const [title, expected] of cases) {
+    assert.deepStrictEqual(tokenTexts(cfTokenizeTitle(title)), expected, JSON.stringify(title));
+  }
+});
+
+test('tokenizer: a split token knows where it sits in the title and starts a new phrase', () => {
+  const { cfTokenizeTitle } = loadContentDom();
+  for (const title of ['Zelda/Mario tips', 'x Zelda—Mario', 'Wait...Zelda', '#zelda#mario', 'Zelda (Mario) tips']) {
+    const tokens = plain(cfTokenizeTitle(title));
+    assert.ok(tokens.length >= 2, title);
+    for (const token of tokens) {
+      assert.strictEqual(title.slice(token.start, token.end), token.text, title);
+    }
+  }
+  const [zelda, mario, tips] = plain(cfTokenizeTitle('Zelda/Mario tips'));
+  assert.strictEqual(zelda.gapBefore, false);
+  assert.strictEqual(mario.gapBefore, true, 'a separator is a phrase break');
+  assert.strictEqual(tips.gapBefore, false, 'a plain space is not');
+});
+
+test('tokenizer: apostrophes, hyphens, single dots, & + and _ stay inside a word', () => {
+  const { cfTokenizeTitle } = loadContentDom();
+  const kept = ["Baldur's", 'Spider-Man', 'node.js', 'Q&A', 'R&B', 'C++20', 'snake_case', 'U.S.A', 'Mr.Beast', "O'Brien"];
+  for (const word of kept) {
+    assert.deepStrictEqual(tokenTexts(cfTokenizeTitle(word)), [word], word);
+  }
+  assert.deepStrictEqual(tokenTexts(cfTokenizeTitle('Spider-Man/Baldur’s—Q&A')), ['Spider-Man', 'Baldur’s', 'Q&A']);
+});
+
+test('tokenizer: a , : or / between two digits belongs to the number', () => {
+  const { cfTokenizeTitle } = loadContentDom();
+  for (const word of ['24/7', '10:30', '1,000', '1/2/3']) {
+    assert.deepStrictEqual(tokenTexts(cfTokenizeTitle(word)), [word], word);
+  }
+  assert.deepStrictEqual(tokenTexts(cfTokenizeTitle('top 10, best 3/4 of 24/7 at 10:30')),
+    ['top', '10', 'best', '3/4', 'of', '24/7', 'at', '10:30']);
+  assert.deepStrictEqual(tokenTexts(cfTokenizeTitle('3...2...1')), ['3', '2', '1'], 'an ellipsis is not part of a number');
+});
+
+test('tokenizer: elisions still split after a separator split', () => {
+  const { cfTokenizeTitle } = loadContentDom();
+  const title = "Il gioco/dell'anno—l'ultimo";
+  const tokens = plain(cfTokenizeTitle(title));
+  assert.deepStrictEqual(tokens.map(t => t.text), ['Il', 'gioco', "dell'", 'anno', "l'", 'ultimo']);
+  assert.deepStrictEqual(tokens.map(t => t.elision), [false, false, true, false, true, false]);
+  for (const token of tokens) {
+    assert.strictEqual(title.slice(token.start, token.end), token.text);
+  }
+});
+
+test('quick-add: words glued by a separator are separate chips, none of them reaches across it', () => {
+  const { cfQuickAddChips, matchesKeyword } = loadContentDom();
+  const title = 'Zelda/Mario tips #shorts#fyp, Halo—Doom...Quake';
+  const chips = plain(cfQuickAddChips(title));
+  const selectable = chips.filter(c => !c.stop).map(c => c.phrase);
+  for (const word of ['zelda', 'mario', 'tips', 'shorts', 'fyp', 'halo', 'doom', 'quake']) {
+    assert.ok(selectable.includes(word), word + ' is a chip');
+  }
+  for (const fused of ['zelda/mario', 'shorts#fyp', 'fyp#shorts', 'halo—doom', 'doom...quake', 'zelda mario', 'zelda/mario tips', 'doom quake']) {
+    assert.ok(!chips.some(c => c.phrase === fused), fused + ' is not a chip');
+  }
+  assert.ok(selectable.includes('mario tips'), 'a plain space still joins neighbours');
+  assert.ok(selectable.includes('tips #shorts'), 'a plain space still joins neighbours');
+  for (const chip of chips) {
+    assert.strictEqual(matchesKeyword(title, chip.phrase), true, chip.phrase);
+  }
+});
+
+test('quick-add selection: picked words on both sides of a glued separator are saved one by one', () => {
+  const { cfResolveQuickAddSelection } = loadContentDom();
+  const out = plain(cfResolveQuickAddSelection('Zelda/Mario tips', new Set(['zelda', 'mario'])));
+  assert.deepStrictEqual([...out.phrases].sort(), ['mario', 'zelda']);
+  assert.deepStrictEqual(out.skipped, []);
+});
+
+test('scan: words glued by a separator are counted as separate words', () => {
+  const { cfExtractKeywords, matchesKeyword } = loadContentDom();
+  const titles = [
+    'Minecraft hardcore #shorts#fyp',
+    'Minecraft speedrun #shorts#fyp',
+    'Wait...Minecraft',
+    'Zelda—Minecraft crossover'
+  ];
+  const cands = plain(cfExtractKeywords(titles));
+  const byPhrase = new Map(cands.map(c => [c.phrase, c.count]));
+  assert.strictEqual(byPhrase.get('minecraft'), 4, JSON.stringify(cands));
+  assert.strictEqual(byPhrase.get('shorts'), 2, JSON.stringify(cands));
+  assert.strictEqual(byPhrase.get('fyp'), 2, JSON.stringify(cands));
+  assert.ok(!cands.some(c => c.phrase.includes('#')), 'no hashtag run as a phrase: ' + JSON.stringify(cands));
+  for (const cand of cands) {
+    assert.ok(titles.some(t => matchesKeyword(t, cand.phrase)), cand.phrase);
+  }
+});
+
+test('scan: names around a slash keep their full count', () => {
+  const { cfExtractKeywords, matchesKeyword } = loadContentDom();
+  const titles = ['Zelda/Mario tips', 'Zelda tips', 'Mario/Zelda guide', 'Zelda guide'];
+  const cands = plain(cfExtractKeywords(titles));
+  const byPhrase = new Map(cands.map(c => [c.phrase, c.count]));
+  assert.strictEqual(byPhrase.get('zelda'), 4, JSON.stringify(cands));
+  assert.strictEqual(byPhrase.get('mario'), 2, JSON.stringify(cands));
+  assert.strictEqual(byPhrase.get('tips'), 2, JSON.stringify(cands));
+  // "guide" only ever follows zelda, so the pair with the same count hides it
+  assert.strictEqual(byPhrase.get('zelda guide'), 2, JSON.stringify(cands));
+  assert.ok(!byPhrase.has('guide'), JSON.stringify(cands));
+  assert.ok(!cands.some(c => c.phrase.includes('/')), 'no phrase spans the slash');
+  for (const cand of cands) {
+    assert.ok(titles.some(t => matchesKeyword(t, cand.phrase)), cand.phrase);
+  }
 });
 
 // --- Safety net helper ---
