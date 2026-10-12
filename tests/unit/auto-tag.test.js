@@ -219,6 +219,10 @@ test('auto-tag: malformed messages and stored shapes are ignored, not fatal', as
   assert.deepStrictEqual(res.newlyTagged, []);
   assert.deepStrictEqual(bg.storage().categoryHitVideos.gaming.ign, ['aaaaaaaaaaa']);
   assert.deepStrictEqual(await bg.handleMessage({ action: 'batchIncrementCategoryHits' }), { success: true, newlyTagged: [] });
+  // An entry that adds no video leaves no empty map behind
+  await bg.handleMessage({ action: 'batchIncrementCategoryHits', hits: [['anime::crunchyroll', [42]], ['gaming::ign', ['bbbbbbbbbbb']]] });
+  assert.strictEqual(bg.storage().categoryHitVideos.anime, undefined);
+  assert.strictEqual(bg.storage().categoryHits.anime, undefined);
 });
 
 test('auto-tag: export and import carry the untag exclusions', async () => {

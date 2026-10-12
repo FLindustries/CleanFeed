@@ -227,8 +227,8 @@ const Storage = {
       if (!cat || !ch) continue;
       if (Array.isArray(exclusions[cat]) && exclusions[cat].includes(ch)) continue;
 
-      if (!videos[cat] || typeof videos[cat] !== 'object') videos[cat] = {};
-      const counted = Array.isArray(videos[cat][ch]) ? videos[cat][ch] : [];
+      const catVideos = videos[cat] && typeof videos[cat] === 'object' ? videos[cat] : {};
+      const counted = Array.isArray(catVideos[ch]) ? catVideos[ch] : [];
       let added = false;
       for (const videoKey of entry[1]) {
         if (typeof videoKey !== 'string' || !videoKey || counted.includes(videoKey)) continue;
@@ -239,7 +239,8 @@ const Storage = {
       if (counted.length > this.CATEGORY_HIT_VIDEOS_MAX) {
         counted.splice(0, counted.length - this.CATEGORY_HIT_VIDEOS_MAX);
       }
-      videos[cat][ch] = counted;
+      catVideos[ch] = counted;
+      videos[cat] = catVideos;
       if (!hits[cat] || typeof hits[cat] !== 'object') hits[cat] = {};
       hits[cat][ch] = counted.length;
       changed = true;
