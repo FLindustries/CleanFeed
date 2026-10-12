@@ -164,6 +164,126 @@ function recheckProAfterCheckout() {
 // Service worker start
 refreshProStatus();
 
+// --- Pro plans (cached) ---
+// extpay.getPlans() asks extensionpay.com for the plans and their prices, so
+// the normalized answer is cached in chrome.storage.local `plansCache`:
+// { plans, fetchedAt }. A cache younger than PLANS_CACHE_TTL_MS answers with no
+// request; an older one answers at once and is refreshed in the background. A
+// failed refresh keeps the last cache; with none, the answer is no plans.
+const PLANS_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+// After a failed request, the next one waits this long.
+const PLANS_RETRY_MS = 5 * 60 * 1000;
+// With nothing cached, getPlans waits this long for ExtPay, then answers no
+// plans; the late answer is still cached.
+const PLANS_FIRST_WAIT_MS = 5000;
+const PLAN_INTERVALS = ['month', 'year', 'once'];
+// A plan nickname goes into ExtensionPay's checkout URL: plain names only.
+const PLAN_NICKNAME_RE = /^[A-Za-z0-9_-]{1,64}$/;
+
+// Pure. ExtPay's getPlans() answer as [{ nickname, interval, unitAmountCents,
+// currency }]. Dropped: a plan with no positive price, an interval other than
+// month / year / once, a recurring plan billed every 2+ intervals (the picker
+// shows prices per month and per year), or no 3-letter currency. A nickname
+// that is not a plain name becomes null (its card opens ExtPay's own page).
+function normalizePlans(raw) {
+  if (!Array.isArray(raw)) return [];
+  const plans = [];
+  for (const p of raw) {
+    if (!p || typeof p !== 'object') continue;
+    if (!Number.isFinite(p.unitAmountCents) || p.unitAmountCents <= 0) continue;
+    if (!PLAN_INTERVALS.includes(p.interval)) continue;
+    if (p.interval !== 'once' && p.intervalCount != null && p.intervalCount !== 1) continue;
+    if (typeof p.currency !== 'string' || !/^[A-Za-z]{3}$/.test(p.currency)) continue;
+    plans.push({
+      nickname: typeof p.nickname === 'string' && PLAN_NICKNAME_RE.test(p.nickname) ? p.nickname : null,
+      interval: p.interval,
+      unitAmountCents: Math.round(p.unitAmountCents),
+      currency: p.currency.toLowerCase()
+    });
+  }
+  return plans;
+}
+
+// `cache` when it is a well-formed { plans, fetchedAt }, else null.
+function validPlansCache(cache) {
+  if (!cache || typeof cache !== 'object') return null;
+  if (!Array.isArray(cache.plans) || !Number.isFinite(cache.fetchedAt)) return null;
+  return cache;
+}
+
+// Pure. What getPlans does with `cache` at `now`; no request starts before
+// `retryAt` (set after a failed one):
+//   fresh cache -> { plans: cached, refresh: false, wait: false }
+//   stale cache -> { plans: cached, refresh: true,  wait: false }  answer now, refresh in the background
+//   no cache    -> { plans: [],     refresh: true,  wait: true }   wait for the first answer
+function plansCacheDecision(cache, now, retryAt) {
+  const valid = validPlansCache(cache);
+  const canRefresh = now >= (retryAt || 0);
+  if (!valid) return { plans: [], refresh: canRefresh, wait: canRefresh };
+  const age = now - valid.fetchedAt;
+  const fresh = age >= 0 && age < PLANS_CACHE_TTL_MS;
+  return { plans: valid.plans, refresh: !fresh && canRefresh, wait: false };
+}
+
+let plansRefresh = null;  // the request in flight (resolves to the new cache, or null)
+let plansRetryAt = 0;     // no request before this time
+
+// Asks ExtPay now (one request at a time) and caches the answer.
+function refreshPlans() {
+  if (!plansRefresh) {
+    plansRefresh = (async () => {
+      try {
+        if (!extpay || typeof extpay.getPlans !== 'function') throw new Error('ExtensionPay is not available');
+        const cache = { plans: normalizePlans(await extpay.getPlans()), fetchedAt: Date.now() };
+        await chrome.storage.local.set({ plansCache: cache });
+        return cache;
+      } catch (e) {
+        console.warn('CleanFeed: could not load the Pro plans, keeping the last known ones:', e);
+        plansRetryAt = Date.now() + PLANS_RETRY_MS;
+        return null;
+      }
+    })().finally(() => { plansRefresh = null; });
+  }
+  return plansRefresh;
+}
+
+// The plans for a page: the cached ones, refreshed in the background when
+// stale. Only with nothing cached does it wait (briefly) for ExtPay.
+async function getPlans() {
+  let cache = null;
+  try {
+    cache = (await chrome.storage.local.get('plansCache')).plansCache;
+  } catch (e) { /* treated as no cache */ }
+  const decision = plansCacheDecision(cache, Date.now(), plansRetryAt);
+  if (!decision.refresh) return { plans: decision.plans };
+  const refresh = refreshPlans();
+  if (!decision.wait) return { plans: decision.plans };
+  const fresh = await withTimeout(refresh, PLANS_FIRST_WAIT_MS, null);
+  return { plans: fresh ? fresh.plans : [] };
+}
+
+// Opens the in-app plan picker (options.html#upgrade): an options tab that is
+// open already is focused and shown the picker, else a new tab opens.
+async function openPlanPicker() {
+  const url = chrome.runtime.getURL('options.html#upgrade');
+  const page = chrome.runtime.getURL('options.html');
+  try {
+    if (chrome.runtime.getContexts) {
+      const contexts = await chrome.runtime.getContexts({ contextTypes: ['TAB'] });
+      const open = (contexts || []).find(c => Number.isInteger(c.tabId) && c.tabId >= 0 &&
+        typeof c.documentUrl === 'string' && c.documentUrl.split(/[?#]/)[0] === page);
+      if (open) {
+        const tab = await chrome.tabs.update(open.tabId, { active: true, url });
+        if (tab && chrome.windows && chrome.windows.update) await chrome.windows.update(tab.windowId, { focused: true });
+        return;
+      }
+    }
+  } catch (e) {
+    // That tab closed meanwhile, or no access: open a new one
+  }
+  await chrome.tabs.create({ url });
+}
+
 // --- Install / Update ---
 
 // Chrome runs content scripts only in pages loaded after CleanFeed is
@@ -737,10 +857,26 @@ async function handleMessage(request) {
     }
 
     // --- Payment ---
+    case 'getPlans': {
+      return await getPlans();
+    }
+
+    // { plan: nickname } opens that plan's ExtensionPay checkout; { direct: true }
+    // opens ExtensionPay's own page (the picker's "See plans" when no plans
+    // loaded); anything else opens the in-app plan picker.
     case 'openPaymentPage': {
+      const plan = typeof request.plan === 'string' && PLAN_NICKNAME_RE.test(request.plan) ? request.plan : null;
       try {
-        if (extpay) extpay.openPaymentPage();
-        else chrome.tabs.create({ url: 'https://extensionpay.com' });
+        if (plan || request.direct === true) {
+          if (extpay) {
+            Promise.resolve(plan ? extpay.openPaymentPage(plan) : extpay.openPaymentPage())
+              .catch(e => console.warn('CleanFeed: payment page error:', e));
+          } else {
+            await chrome.tabs.create({ url: 'https://extensionpay.com' });
+          }
+        } else {
+          await openPlanPicker();
+        }
       } catch (e) {
         console.warn('CleanFeed: payment page error:', e);
       }

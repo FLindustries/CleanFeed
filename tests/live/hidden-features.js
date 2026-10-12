@@ -209,7 +209,7 @@ async function optionsScenario(lang) {
       settings: Array.from(document.querySelectorAll('#settings-list .toggle-title'), t => t.textContent.trim()),
       timeInputs: document.querySelectorAll('#settings-list input[type="time"], #settings-list input[type="number"], #settings-list .day-chip').length,
       statCards: Array.from(document.querySelectorAll('#stats-cards .stat-card-label'), l => l.textContent.trim()),
-      upgradeCopy: (document.querySelector('#upgradeCard p') || {}).textContent || null,
+      upgradeCopy: (document.querySelector('#upgrade #planFooter p') || {}).textContent || null,
       aboutCopy: (document.querySelector('#section-about .about-card p') || {}).textContent || null,
       text: document.body.textContent.replace(/\s+/g, ' ')
     }));

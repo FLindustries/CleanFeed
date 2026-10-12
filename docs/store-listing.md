@@ -32,7 +32,8 @@ SMART FEATURES
 
 FREE & PRO
 Free: block unlimited channels, hide Shorts, and block up to 3 keywords or topics.
-Pro ($3.99/mo): unlimited keywords and topics, Strict Mode password lock, hidden-videos log, and a whitelist for your subscribed channels.
+Pro: unlimited keywords and topics, Strict Mode password lock, hidden-videos log, and a whitelist for your subscribed channels.
+Pro prices (USD): Monthly $2.99, Yearly $19.99 (= $1.67/mo, save 44%), Lifetime $29.99 one-time (launch price until Dec 31, 2026).
 
 YOUR DATA STAYS ON YOUR DEVICE
 Your block lists and settings are stored on your device. No analytics, no tracking, no ads. The only outside service is ExtensionPay, which checks whether you have paid for Pro.
@@ -61,7 +62,8 @@ FUNZIONI SMART
 
 GRATIS E PRO
 Gratis: blocco canali illimitato, nascondi Shorts e fino a 3 keyword o argomenti bloccati.
-Pro (3,99$/mese): keyword e argomenti illimitati, blocco con password della modalità rigorosa, log dei video nascosti e whitelist per i canali a cui sei iscritto.
+Pro: keyword e argomenti illimitati, blocco con password della modalità rigorosa, log dei video nascosti e whitelist per i canali a cui sei iscritto.
+Prezzi Pro (in USD): mensile 2,99 USD, annuale 19,99 USD (= 1,67 USD/mese, risparmi il 44%), a vita 29,99 USD una tantum (prezzo di lancio fino al 31/12/2026).
 
 I TUOI DATI RESTANO SUL TUO DISPOSITIVO
 Liste di blocco e impostazioni sono salvate sul tuo dispositivo. Nessuna analisi, nessun tracciamento, nessuna pubblicità. L'unico servizio esterno è ExtensionPay, che verifica se hai pagato Pro.

@@ -62,17 +62,158 @@ function cfFormatMessage(entry, subs) {
 }
 
 // True when a chrome.storage change only touches Pro-status bookkeeping
-// (the background's proStatusCache, ExtPay's extensionpay_* keys) and the
-// Pro answer itself did not change: nothing to re-filter or re-render.
+// (the background's proStatusCache and plansCache, ExtPay's extensionpay_*
+// keys) and the Pro answer itself did not change: nothing to re-filter or
+// re-render (the plan picker and the popup's price line refresh on their own).
 function cfIsProBookkeepingOnly(changes) {
   const keys = Object.keys(changes || {});
   if (keys.length === 0) return false;
-  if (!keys.every(key => key === 'proStatusCache' || key.startsWith('extensionpay_'))) return false;
+  if (!keys.every(key => key === 'proStatusCache' || key === 'plansCache' || key.startsWith('extensionpay_'))) return false;
   const pro = changes.proStatusCache;
   if (!pro) return true;
   const wasPro = !!(pro.oldValue && pro.oldValue.isPro === true);
   const isPro = !!(pro.newValue && pro.newValue.isPro === true);
   return wasPro === isPro;
+}
+
+// ── Pro plans (popup.html and options.html) ──
+// Prices come from ExtensionPay (the background's getPlans): nothing here
+// hard-codes an amount.
+
+// The lifetime plan's launch-price note shows through this local date.
+const CF_LAUNCH_PRICE_END = '2026-12-31';
+
+// The currency readers of a UI language already pay in. Prices in another
+// currency get a note ("Prices in USD." / "Prezzi in USD; ...").
+const CF_LOCALE_CURRENCY = { it: 'EUR' };
+
+// The locale of the messages the page shows (messages.json `uiLocale`:
+// "en", "it"), for Intl. `getMessage` is the page's message helper; "en"
+// when the message is missing.
+function cfUiLocale(getMessage) {
+  let code = '';
+  try { code = String(getMessage('uiLocale') || ''); } catch (e) { code = ''; }
+  return /^[a-z]{2,3}(-[A-Z]{2})?$/.test(code) ? code : 'en';
+}
+
+// `today` (a Date, or a 'YYYY-MM-DD' string) as its local 'YYYY-MM-DD'.
+function cfLocalDateKey(today) {
+  if (typeof today === 'string') return today.slice(0, 10);
+  const d = today && typeof today.getFullYear === 'function' ? today : new Date();
+  const pad = n => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+}
+
+// Formats amounts of `currency` in its minor unit (ExtensionPay's
+// unitAmountCents: cents for USD) for `uiLang`: { minor, format(amount) }.
+// `minor` is how many minor units make one: 100 for USD, 1 for JPY.
+function cfPriceFormatter(uiLang, currency) {
+  const code = String(currency || '').toUpperCase();
+  let nf = null;
+  for (const lang of [uiLang, 'en']) {
+    try {
+      nf = new Intl.NumberFormat(lang, { style: 'currency', currency: code });
+      break;
+    } catch (e) { nf = null; }
+  }
+  const digits = nf ? nf.resolvedOptions().maximumFractionDigits : 2;
+  const minor = Math.pow(10, digits);
+  return {
+    minor,
+    format: amount => nf ? nf.format(amount / minor) : (amount / minor).toFixed(digits) + ' ' + code
+  };
+}
+
+// Pure. The plan picker's cards from ExtensionPay plans ([{ nickname,
+// interval, unitAmountCents, currency }], as getPlans answers), in this order
+// and each only when its plan exists: monthly (interval 'month'), yearly
+// ('year'), lifetime ('once'). When several plans share an interval, the one
+// nicknamed monthly / yearly / lifetime wins, else the first. Plans without a
+// positive price or a currency are ignored.
+// Each card: { kind, nickname, currency ('USD'), amountCents, price }, plus
+//   yearly:   perMonth / perMonthCents (the yearly price / 12, rounded UP),
+//             savePercent (vs 12 x monthly, rounded DOWN; null without a
+//             monthly plan in the same currency or without a saving), and
+//             bestValue (true only when perMonth is below the monthly price);
+//   lifetime: launchNote (true through CF_LAUNCH_PRICE_END, by the local date
+//             of `today`: a Date or 'YYYY-MM-DD') and launchEnds (that date
+//             written out for `uiLang`).
+// Prices use Intl.NumberFormat for `uiLang` ('en': "$2.99", 'it': "2,99 USD").
+function cfBuildPlanCards(plans, uiLang, today) {
+  const lang = String(uiLang || 'en').replace(/_/g, '-');
+  const list = (Array.isArray(plans) ? plans : []).filter(p =>
+    p && typeof p === 'object' && Number.isFinite(p.unitAmountCents) && p.unitAmountCents > 0 &&
+    typeof p.currency === 'string' && p.currency !== '');
+  const pick = (interval, nickname) => {
+    const same = list.filter(p => p.interval === interval);
+    return same.find(p => p.nickname === nickname) || same[0] || null;
+  };
+  const card = (kind, plan) => {
+    const amountCents = Math.round(plan.unitAmountCents);
+    return {
+      kind,
+      nickname: typeof plan.nickname === 'string' && plan.nickname ? plan.nickname : null,
+      currency: plan.currency.toUpperCase(),
+      amountCents,
+      price: cfPriceFormatter(lang, plan.currency).format(amountCents)
+    };
+  };
+
+  const monthly = pick('month', 'monthly');
+  const yearly = pick('year', 'yearly');
+  const lifetime = pick('once', 'lifetime');
+  const cards = [];
+  if (monthly) cards.push(card('monthly', monthly));
+  if (yearly) {
+    const c = card('yearly', yearly);
+    c.perMonthCents = Math.ceil(c.amountCents / 12);
+    c.perMonth = cfPriceFormatter(lang, yearly.currency).format(c.perMonthCents);
+    c.savePercent = null;
+    c.bestValue = false;
+    if (monthly && monthly.currency.toUpperCase() === c.currency) {
+      const monthCents = Math.round(monthly.unitAmountCents);
+      // Whole cents: an exact percentage never floors one point too low
+      const save = Math.floor(100 * (12 * monthCents - c.amountCents) / (12 * monthCents));
+      if (save > 0) c.savePercent = save;
+      c.bestValue = c.perMonthCents < monthCents;
+    }
+    cards.push(c);
+  }
+  if (lifetime) {
+    const c = card('lifetime', lifetime);
+    c.launchNote = cfLocalDateKey(today) <= CF_LAUNCH_PRICE_END;
+    const [y, m, d] = CF_LAUNCH_PRICE_END.split('-').map(Number);
+    try {
+      c.launchEnds = new Intl.DateTimeFormat(lang, { day: 'numeric', month: 'long', year: 'numeric' }).format(new Date(y, m - 1, d));
+    } catch (e) {
+      c.launchEnds = CF_LAUNCH_PRICE_END;
+    }
+    cards.push(c);
+  }
+  return cards;
+}
+
+// Pure. The popup's price line under "Upgrade to Pro" from cfBuildPlanCards
+// cards, e.g. "$1.67/mo billed yearly · or $2.99 monthly": the first two of
+// yearly, monthly and lifetime; '' with no plans. `getMessage(key, subs)` is
+// the page's message helper.
+function cfPlansLine(cards, getMessage) {
+  const byKind = {};
+  for (const c of Array.isArray(cards) ? cards : []) byKind[c.kind] = c;
+  const parts = [];
+  if (byKind.yearly) parts.push(getMessage('planLineYearly', [byKind.yearly.perMonth]));
+  if (byKind.monthly) parts.push(getMessage('planLineMonthly', [byKind.monthly.price]));
+  if (byKind.lifetime) parts.push(getMessage('planOnce', [byKind.lifetime.price]));
+  return parts.slice(0, 2).map((part, i) => (i === 0 ? part : getMessage('planLineOr', [part]))).join(' · ');
+}
+
+// Pure. The currency code a "Prices in ..." note names for these cards, or
+// null: no cards, mixed currencies, or the UI language's own currency.
+function cfPlansCurrencyToNote(cards, uiLang) {
+  const codes = [...new Set((Array.isArray(cards) ? cards : []).map(c => c.currency))];
+  if (codes.length !== 1) return null;
+  const lang = String(uiLang || 'en').toLowerCase().split(/[-_]/)[0];
+  return CF_LOCALE_CURRENCY[lang] === codes[0] ? null : codes[0];
 }
 
 // Validates a string as a plausible channel name. YouTube's metadata spans

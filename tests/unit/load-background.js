@@ -41,6 +41,18 @@
 // bg.tabsQueries holds every chrome.tabs.query() argument, bg.scriptingCalls
 // every chrome.scripting call ({ method, tabId, files }), failed ones included.
 // chrome.runtime.getManifest() returns the real manifest.json (version 0.0.0-test).
+//
+// Plans and checkout. `options`:
+//   getPlans   replaces the stub ExtPay's getPlans (async () => plans, or throw
+//              to fail; default: no plans)
+//   noExtPay   true: ExtPay() throws, like a failed ExtensionPay init
+//   contexts   what chrome.runtime.getContexts() returns (default []):
+//              [{ contextType, tabId, windowId, documentUrl }]
+// bg.getPlansCalls() counts getPlans() calls; bg.openPaymentPageCalls holds
+// the argument of each extpay.openPaymentPage() call (null for none);
+// bg.tabsCreated, bg.tabsUpdated ([tabId, props]) and bg.windowsUpdated
+// ([windowId, props]) record those chrome calls. chrome.runtime.getURL(path)
+// is bg.extensionUrl(path): 'chrome-extension://cleanfeed-test/' + path.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -110,13 +122,22 @@ function loadBackground(initialStorage, options) {
   const paidListeners = [];
   let getUserCalls = 0;
   const getUser = opts.getUser || (async () => ({ paid: isPro }));
+  let getPlansCalls = 0;
+  const getPlans = opts.getPlans || (async () => []);
+  const openPaymentPageCalls = [];
+  const tabsCreated = [];
+  const tabsUpdated = [];
+  const windowsUpdated = [];
+  const extensionUrl = p => 'chrome-extension://cleanfeed-test/' + p;
   const chrome = {
     storage: { local, sync, onChanged: listener('storageOnChanged') },
     runtime: {
       onInstalled: listener('onInstalled'),
       onStartup: listener('onStartup'),
       onMessage: listener('onMessage'),
-      getManifest: () => Object.assign(clone(MANIFEST), { version: '0.0.0-test' })
+      getManifest: () => Object.assign(clone(MANIFEST), { version: '0.0.0-test' }),
+      getURL: extensionUrl,
+      async getContexts() { return clone(opts.contexts || []); }
     },
     alarms: {
       onAlarm: listener('onAlarm'),
@@ -125,8 +146,12 @@ function loadBackground(initialStorage, options) {
       get(name, cb) { alarmCalls.push(['get', name]); if (cb) cb(null); }
     },
     tabs: {
-      create() {},
+      async create(props) { tabsCreated.push(clone(props)); return { id: 900 + tabsCreated.length, windowId: 1 }; },
+      async update(tabId, props) { tabsUpdated.push([tabId, clone(props)]); return { id: tabId, windowId: 1 }; },
       async query(queryInfo) { tabsQueries.push(clone(queryInfo)); return clone(opts.tabs || []); }
+    },
+    windows: {
+      async update(windowId, props) { windowsUpdated.push([windowId, clone(props)]); return { id: windowId }; }
     },
     scripting: {
       insertCSS: async injection => scriptingCall('insertCSS', injection),
@@ -141,12 +166,16 @@ function loadBackground(initialStorage, options) {
     setTimeout: opts.setTimeout || setTimeout,
     clearTimeout: opts.clearTimeout || clearTimeout,
     importScripts() {},
-    ExtPay: () => ({
-      startBackground() {},
-      getUser() { getUserCalls++; return getUser(); },
-      onPaid: { addListener(fn) { paidListeners.push(fn); } },
-      openPaymentPage() {}
-    })
+    ExtPay: () => {
+      if (opts.noExtPay) throw new Error('ExtPay init failed (test)');
+      return {
+        startBackground() {},
+        getUser() { getUserCalls++; return getUser(); },
+        getPlans() { getPlansCalls++; return getPlans(); },
+        onPaid: { addListener(fn) { paidListeners.push(fn); } },
+        openPaymentPage(plan) { openPaymentPageCalls.push(plan === undefined ? null : plan); }
+      };
+    }
   };
   vm.createContext(sandbox);
   if (opts.now) {
@@ -172,6 +201,12 @@ function loadBackground(initialStorage, options) {
     proStatusCache: () => clone(local.data[PRO_CACHE_KEY]),
     proWrites,
     getUserCalls: () => getUserCalls,
+    getPlansCalls: () => getPlansCalls,
+    openPaymentPageCalls,
+    tabsCreated,
+    tabsUpdated,
+    windowsUpdated,
+    extensionUrl,
     paidListeners,
     writes,
     listeners,

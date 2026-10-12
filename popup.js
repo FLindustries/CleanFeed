@@ -148,14 +148,64 @@ function renderControls() {
     subtitle.textContent = cfMsg('upgradeProDesc');
     cta.appendChild(subtitle);
 
+    // No plan: the background opens the plan picker (options.html#upgrade)
     const btn = document.createElement('button');
     btn.className = 'upgrade-btn';
     btn.textContent = cfMsg('upgradeToPro');
     btn.addEventListener('click', () => chrome.runtime.sendMessage({ action: 'openPaymentPage' }));
     cta.appendChild(btn);
 
+    // Prices from ExtensionPay, e.g. "$1.67/mo billed yearly · or $2.99 monthly"
+    const plansLine = document.createElement('div');
+    plansLine.className = 'upgrade-plans';
+    plansLine.id = 'upgradePlans';
+    cta.appendChild(plansLine);
+
     container.appendChild(cta);
+    renderPlansLine();
   }
+}
+
+// cfBuildPlanCards() cards (content-dom.js); null until getPlans answers
+let planCards = null;
+let plansLoading = null;  // the getPlans request in flight
+let plansReload = false;  // ask again once it answers (the plans changed meanwhile)
+
+function loadPlans() {
+  if (plansLoading) {
+    plansReload = true;
+    return plansLoading;
+  }
+  plansLoading = (async () => {
+    let plans = [];
+    try {
+      const res = await chrome.runtime.sendMessage({ action: 'getPlans' });
+      if (res && Array.isArray(res.plans)) plans = res.plans;
+    } catch (e) { /* no line */ }
+    planCards = cfBuildPlanCards(plans, cfUiLocale(cfMsg), new Date());
+    renderPlansLine();
+  })().finally(() => {
+    plansLoading = null;
+    if (plansReload) {
+      plansReload = false;
+      loadPlans();
+    }
+  });
+  return plansLoading;
+}
+
+// The line under "Upgrade to Pro"; empty and hidden without plans.
+function renderPlansLine() {
+  const line = document.getElementById('upgradePlans');
+  if (!line) return;
+  if (planCards === null) {
+    line.hidden = true;
+    loadPlans();
+    return;
+  }
+  const text = cfPlansLine(planCards, cfMsg);
+  line.textContent = text;
+  line.hidden = !text;
 }
 
 function createToggle(titleKey, descKey, isActive, isLocked, onChange) {
@@ -558,7 +608,9 @@ chrome.storage.onChanged.addListener(async (changes) => {
   }
   // Skip re-render if we're mid-toggle update to avoid reverting visual state
   if (settingsUpdateInFlight && keys.length === 1 && keys[0] === 'settings') return;
-  // Pro status re-checked with the same answer (content-dom.js)
+  // The background refreshed the Pro plans: new prices for the upgrade line
+  if (changes.plansCache && document.getElementById('upgradePlans')) loadPlans();
+  // Pro status re-checked with the same answer, or the plans (content-dom.js)
   if (cfIsProBookkeepingOnly(changes)) return;
   await loadState();
   renderAll();

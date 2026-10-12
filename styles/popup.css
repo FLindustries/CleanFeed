@@ -340,6 +340,15 @@ body {
   background: var(--accent-hover);
 }
 
+/* Prices under the Upgrade button, from ExtensionPay */
+.upgrade-plans {
+  margin-top: 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
 /* ── Section Headers ── */
 .section-header {
   font-size: 11px;

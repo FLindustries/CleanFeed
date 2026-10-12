@@ -5,7 +5,8 @@
 //     $1..$9 -> substitutions (missing = empty), $$ -> a literal $.
 //     content.js msg(), popup.js cfMsg() and options.js msg() use it when a
 //     language is chosen in Settings; with "Auto" they call chrome.i18n.getMessage.
-//   - English shows "$3.99/mo" ("$$3.99" in messages.json), Italian keeps "3,99€/mese".
+//   - "$$3.99" in messages.json shows "$3.99". The Upgrade button carries no
+//     price: prices come from ExtensionPay (tests/unit/plans.test.js).
 //   - No message in either locale has a bare $<digit> (it would be eaten as a slot).
 //   - cfIsProBookkeepingOnly(changes): storage changes that only refresh Pro
 //     status bookkeeping (same Pro answer) do not re-filter or re-render.
@@ -62,8 +63,8 @@ test('cfFormatMessage: $$ is a literal dollar, so English shows $3.99/mo', () =>
   assert.strictEqual(f({ message: 'Upgrade to Pro — $$3.99/mo' }), 'Upgrade to Pro — $3.99/mo');
   assert.strictEqual(f({ message: '$$3.99' }), '$3.99');
   assert.strictEqual(f({ message: '$$3.99' }, ['x', 'y', 'z']), '$3.99', 'substitutions do not touch an escaped dollar');
-  assert.strictEqual(f(LOCALES.en.upgradeToPro), 'Upgrade to Pro — $3.99/mo');
-  assert.strictEqual(f(LOCALES.it.upgradeToPro), 'Passa a Pro — 3,99€/mese');
+  assert.strictEqual(f(LOCALES.en.upgradeToPro), 'Upgrade to Pro');
+  assert.strictEqual(f(LOCALES.it.upgradeToPro), 'Passa a Pro');
 });
 
 test('cfFormatMessage: same rules as chrome.i18n.getMessage for $<digit> and stray dollars', () => {
@@ -132,10 +133,12 @@ test('every $NAME$ in en and it is a declared placeholder, and both languages de
 
 // --- the page helpers ---
 
-test('popup.js cfMsg and options.js msg: with a language chosen, English shows $3.99 and Italian 3,99€', () => {
+test('popup.js cfMsg and options.js msg: with a language chosen, each shows its own language', () => {
   for (const [file, helper] of [['popup.js', 'cfMsg'], ['options.js', 'msg']]) {
-    assert.strictEqual(pageHelper(file, helper, 'en')('upgradeToPro'), 'Upgrade to Pro — $3.99/mo', file);
-    assert.strictEqual(pageHelper(file, helper, 'it')('upgradeToPro'), 'Passa a Pro — 3,99€/mese', file);
+    assert.strictEqual(pageHelper(file, helper, 'en')('upgradeToPro'), 'Upgrade to Pro', file);
+    assert.strictEqual(pageHelper(file, helper, 'it')('upgradeToPro'), 'Passa a Pro', file);
+    assert.strictEqual(pageHelper(file, helper, 'en')('planPerMonth', ['$2.99']), '$2.99/mo', file);
+    assert.strictEqual(pageHelper(file, helper, 'it')('uiLocale'), 'it', file);
     assert.strictEqual(pageHelper(file, helper, 'en')('keywordsUsed', ['2']), '2/3 keywords used', file);
     assert.strictEqual(pageHelper(file, helper, 'en')('keywordBlockedToast', ['$&']), 'Blocked keyword: "$&"', file);
   }

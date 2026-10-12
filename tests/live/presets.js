@@ -1,12 +1,14 @@
 'use strict';
-// Live test for cached Pro status, the English price and Quick presets on
+// Live test for cached Pro status, the upgrade copy and Quick presets on
 // the free plan (findings #13, #52, #26).
 //   node tests/live/presets.js   (about 30 s)
 //  1. Service worker start caches Pro status: chrome.storage.local
 //     proStatusCache = { isPro: false, checkedAt } for this free user.
-//  2. Prices: "Upgrade to Pro — $3.99/mo" on Auto (chrome.i18n.getMessage)
-//     and with English chosen in Settings (the custom loader), in options.html
-//     and popup.html; Italian shows "Passa a Pro — 3,99€/mese".
+//  2. Upgrade copy with no price (prices come from ExtensionPay, see
+//     tests/live/plans.js): popup.html's button reads "Upgrade to Pro" on Auto
+//     (chrome.i18n.getMessage) and with English chosen in Settings (the
+//     custom loader), "Passa a Pro" in Italian; options.html's plan picker is
+//     titled "Choose your plan" / "Scegli il tuo piano".
 //  3. options.html, free user with 1 keyword: clicking "Focus mode" adds
 //     nothing, shows no alert and opens no page; an inline notice gives the
 //     real numbers (adds 3, 2 of 3 slots left) with an Upgrade button. The
@@ -21,8 +23,11 @@
 
 const h = require('./harness');
 
-const PRICE_EN = 'Upgrade to Pro — $3.99/mo';
-const PRICE_IT = 'Passa a Pro — 3,99€/mese';
+// Upgrade buttons carry no price (prices come from ExtensionPay: tests/live/plans.js)
+const PRICE_EN = 'Upgrade to Pro';
+const PRICE_IT = 'Passa a Pro';
+const PICKER_EN = 'Choose your plan';
+const PICKER_IT = 'Scegli il tuo piano';
 const NOTICE_EN = "This preset doesn't fit the free plan. Topics it adds: 3. Free slots left: 2 of 3. Pro has no limit.";
 const NOTICE_IT = "Questo preset non rientra nel piano gratuito. Argomenti che aggiunge: 3. Posti liberi nel piano gratuito: 2 su 3. Con Pro non c'è limite.";
 
@@ -73,12 +78,15 @@ async function proCacheScenario() {
 }
 
 async function priceScenario() {
-  const r = { name: 'prices: $3.99/mo in English (Auto and chosen), 3,99€/mese in Italian', pass: false, reasons: [], seen: {} };
+  const r = { name: 'upgrade copy: no price on the button, English (Auto and chosen) and Italian', pass: false, reasons: [], seen: {} };
   const errors = [];
   for (const language of ['auto', 'en', 'it']) {
     await setLanguage(language);
-    const expected = language === 'it' ? PRICE_IT : PRICE_EN;
-    for (const [file, selector] of [['options.html', '#upgradeBtn'], ['popup.html', '.upgrade-btn']]) {
+    const it = language === 'it';
+    for (const [file, selector, expected] of [
+      ['options.html', '#planPickerTitle', it ? PICKER_IT : PICKER_EN],
+      ['popup.html', '.upgrade-btn', it ? PRICE_IT : PRICE_EN]
+    ]) {
       const { page, errors: pageErrors } = await openExtensionPage(file);
       try {
         const shown = await text(page, selector);

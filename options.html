@@ -130,10 +130,15 @@
           <button class="btn btn-secondary" id="bugReportBtn" data-i18n="reportBug">Report a Bug</button>
         </div>
 
-        <div class="about-card" id="upgradeCard">
-          <h3 data-i18n="upgradeToPro">Upgrade to Pro</h3>
-          <p data-i18n="upgradeProDesc">Unlimited keywords and topics, Strict Mode password lock, hidden-videos log, and a whitelist for your subscribed channels.</p>
-          <button class="btn btn-primary" id="upgradeBtn" data-i18n="upgradeToPro">Upgrade to Pro</button>
+        <!-- Plan picker: every upgrade button leads here (options.html#upgrade). Filled by options.js renderUpgrade(). -->
+        <div class="about-card plan-picker" id="upgrade" tabindex="-1" role="region" aria-labelledby="planPickerTitle">
+          <h3 id="planPickerTitle" data-i18n="planPickerTitle">Choose your plan</h3>
+          <div class="plan-cards" id="planCards"></div>
+          <div class="plan-footer" id="planFooter">
+            <p data-i18n="upgradeProDesc">Unlimited keywords and topics, Strict Mode password lock, hidden-videos log, and a whitelist for your subscribed channels.</p>
+            <p class="plan-currency-note" id="planCurrencyNote" hidden></p>
+            <p class="plan-stay-free" data-i18n="planStayFree">Channel blocking and hiding Shorts &amp; comments stay free.</p>
+          </div>
         </div>
       </section>
     </main>

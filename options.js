@@ -117,7 +117,7 @@ function renderAll() {
   renderHidden();
   renderInterests();
   renderStats();
-  renderAbout();
+  renderUpgrade();
 }
 
 // ── Preset Profiles ──
@@ -203,7 +203,7 @@ function renderPresetLimitNotice(blockedKwSet) {
   const btn = document.createElement('button');
   btn.className = 'btn btn-primary';
   btn.textContent = msg('upgradeToPro');
-  btn.addEventListener('click', () => chrome.runtime.sendMessage({ action: 'openPaymentPage' }));
+  btn.addEventListener('click', () => openUpgrade());
   notice.appendChild(text);
   notice.appendChild(btn);
   notice.hidden = false;
@@ -357,7 +357,7 @@ function renderSettings() {
   // Interest Boundaries (Pro) — only while the feature exists (features.js)
   if (CF_FEATURES.interestBoundaries) {
     container.appendChild(createToggle('interestBoundaries', 'interestBoundariesDesc', state.settings?.enableInterestBoundaries, !state.isPro, async (val) => {
-      if (!state.isPro) { chrome.runtime.sendMessage({ action: 'openPaymentPage' }); return; }
+      if (!state.isPro) { openUpgrade(); return; }
       await chrome.runtime.sendMessage({ action: 'updateSetting', key: 'enableInterestBoundaries', value: val });
       state.settings.enableInterestBoundaries = val;
     }));
@@ -366,7 +366,7 @@ function renderSettings() {
   // Smart Decay (Pro) — only while the feature exists (features.js)
   if (CF_FEATURES.smartDecay) {
     container.appendChild(createToggle('smartDecay', 'smartDecayDesc', state.settings?.enableSmartDecay, !state.isPro, async (val) => {
-      if (!state.isPro) { chrome.runtime.sendMessage({ action: 'openPaymentPage' }); return; }
+      if (!state.isPro) { openUpgrade(); return; }
       await chrome.runtime.sendMessage({ action: 'updateSetting', key: 'enableSmartDecay', value: val });
       state.settings.enableSmartDecay = val;
     }));
@@ -449,7 +449,7 @@ function renderSettings() {
     schedKnob.className = 'toggle-knob';
     schedToggle.appendChild(schedKnob);
     schedToggle.addEventListener('click', async () => {
-      if (!state.isPro) { chrome.runtime.sendMessage({ action: 'openPaymentPage' }); return; }
+      if (!state.isPro) { openUpgrade(); return; }
       const newVal = !schedToggle.classList.contains('active');
       schedToggle.classList.toggle('active', newVal);
       await chrome.runtime.sendMessage({ action: 'updateSetting', key: 'scheduleEnabled', value: newVal });
@@ -571,7 +571,7 @@ function renderSettings() {
   strictToggle.appendChild(strictKnob);
   strictToggle.addEventListener('click', async () => {
     const currentlyEnabled = strictToggle.classList.contains('active');
-    if (!currentlyEnabled && !state.isPro) { chrome.runtime.sendMessage({ action: 'openPaymentPage' }); return; }
+    if (!currentlyEnabled && !state.isPro) { openUpgrade(); return; }
     if (!currentlyEnabled) {
       const pwd = prompt(msg('strictSetPassword') !== 'strictSetPassword'
         ? msg('strictSetPassword')
@@ -593,7 +593,7 @@ function renderSettings() {
       }
       const res = await chrome.runtime.sendMessage({ action: 'setStrictPassword', password: pwd });
       if (res?.error === 'pro_only') {
-        chrome.runtime.sendMessage({ action: 'openPaymentPage' });
+        openUpgrade();
         return;
       }
       if (res?.success) {
@@ -667,7 +667,7 @@ function createToggle(titleKey, descKey, isActive, isLocked, onChange) {
 
   toggle.addEventListener('click', () => {
     if (isLocked) {
-      chrome.runtime.sendMessage({ action: 'openPaymentPage' });
+      openUpgrade();
       return;
     }
     const newVal = !toggle.classList.contains('active');
@@ -795,7 +795,7 @@ function renderCategories() {
     toggle.addEventListener('click', async (e) => {
       e.stopPropagation();
       if (isLocked) {
-        chrome.runtime.sendMessage({ action: 'openPaymentPage' });
+        openUpgrade();
         return;
       }
       if (isActive) {
@@ -1058,7 +1058,7 @@ function renderHidden() {
     const btn = document.createElement('button');
     btn.className = 'btn btn-primary';
     btn.textContent = msg('upgradeToPro');
-    btn.addEventListener('click', () => chrome.runtime.sendMessage({ action: 'openPaymentPage' }));
+    btn.addEventListener('click', () => openUpgrade());
     notice.appendChild(btn);
     container.appendChild(notice);
     return;
@@ -1129,7 +1129,7 @@ function renderInterests() {
     const btn = document.createElement('button');
     btn.className = 'btn btn-primary';
     btn.textContent = msg('upgradeToPro');
-    btn.addEventListener('click', () => chrome.runtime.sendMessage({ action: 'openPaymentPage' }));
+    btn.addEventListener('click', () => openUpgrade());
     notice.appendChild(btn);
     container.appendChild(notice);
     return;
@@ -1187,45 +1187,180 @@ function renderInterests() {
   });
 }
 
-// ── About ──
+// ── Plan picker (#upgrade, in About & Support) ──
+// Every upgrade button in CleanFeed leads here: options.js buttons call
+// openUpgrade(), the popup and the YouTube page ask the background, which
+// opens options.html#upgrade. Prices come from ExtensionPay (getPlans), never
+// from this file; each card opens that plan's checkout.
 
-function renderAbout() {
-  const upgradeCard = document.getElementById('upgradeCard');
-  // Replaced once: after that #upgradeBtn is gone (Pro can arrive while the page is open)
-  if (upgradeCard && upgradeCard.querySelector('#upgradeBtn') && state.isPro) {
-    // Replace "Upgrade" card with "You are Pro" message
-    upgradeCard.textContent = '';
-    const h3 = document.createElement('h3');
-    h3.textContent = 'CleanFeed Pro';
-    upgradeCard.appendChild(h3);
-    const p = document.createElement('p');
-    p.textContent = msg('youArePro') !== 'youArePro'
-      ? msg('youArePro')
-      : 'You have full access to all CleanFeed features. Thank you for your support!';
-    upgradeCard.appendChild(p);
+// cfBuildPlanCards() cards (content-dom.js); null until getPlans answers
+let planCards = null;
+let plansLoading = null;  // the getPlans request in flight
+let plansReload = false;  // ask again once it answers (the plans changed meanwhile)
+
+function loadPlans() {
+  if (plansLoading) {
+    plansReload = true;
+    return plansLoading;
   }
+  plansLoading = (async () => {
+    let plans = [];
+    try {
+      const res = await chrome.runtime.sendMessage({ action: 'getPlans' });
+      if (res && Array.isArray(res.plans)) plans = res.plans;
+    } catch (e) {
+      console.warn('CleanFeed: could not load the Pro plans', e);
+    }
+    planCards = cfBuildPlanCards(plans, cfUiLocale(msg), new Date());
+    renderUpgrade();
+  })().finally(() => {
+    plansLoading = null;
+    if (plansReload) {
+      plansReload = false;
+      loadPlans();
+    }
+  });
+  return plansLoading;
+}
+
+function planCardEl(card) {
+  const featured = card.kind === 'yearly';
+  const nameKey = { monthly: 'planMonthly', yearly: 'planYearly', lifetime: 'planLifetime' }[card.kind];
+  const nameId = 'plan-name-' + card.kind;
+
+  const head = cfEl('div', { className: 'plan-card-head' }, [
+    cfEl('span', { className: 'plan-card-name', id: nameId, textContent: msg(nameKey) })
+  ]);
+  if (card.bestValue) head.appendChild(cfEl('span', { className: 'plan-badge', textContent: msg('planBestValue') }));
+
+  const lines = [];
+  if (card.kind === 'monthly') {
+    lines.push(cfEl('div', { className: 'plan-card-price', textContent: msg('planPerMonth', [card.price]) }));
+    lines.push(cfEl('div', { className: 'plan-card-detail', textContent: msg('planBilledMonthly') }));
+  } else if (card.kind === 'yearly') {
+    lines.push(cfEl('div', { className: 'plan-card-price', textContent: msg('planPerMonth', [card.perMonth]) }));
+    lines.push(cfEl('div', {
+      className: 'plan-card-detail',
+      textContent: card.savePercent
+        ? msg('planBilledYearlySave', [card.price, String(card.savePercent)])
+        : msg('planBilledYearly', [card.price])
+    }));
+  } else {
+    lines.push(cfEl('div', { className: 'plan-card-price', textContent: msg('planOnce', [card.price]) }));
+    lines.push(cfEl('div', { className: 'plan-card-detail', textContent: msg('planOneTimeNote') }));
+    if (card.launchNote) {
+      lines.push(cfEl('div', { className: 'plan-card-note', textContent: msg('planLaunchNote', [card.launchEnds]) }));
+    }
+  }
+
+  // A plan without a nickname has no checkout of its own: ExtensionPay's page
+  const request = card.nickname
+    ? { action: 'openPaymentPage', plan: card.nickname }
+    : { action: 'openPaymentPage', direct: true };
+  const button = cfEl('button', {
+    className: 'btn plan-choose ' + (featured ? 'btn-primary' : 'btn-secondary'),
+    'data-plan': card.kind,
+    'aria-describedby': nameId,
+    textContent: msg('planChoose'),
+    onclick: () => chrome.runtime.sendMessage(request)
+  });
+
+  return cfEl('div', {
+    className: 'plan-card' + (featured ? ' plan-card-featured' : ''),
+    'data-plan': card.kind,
+    role: 'group',
+    'aria-labelledby': nameId
+  }, [head, ...lines, cfEl('div', { className: 'plan-card-spacer' }), button]);
+}
+
+function renderUpgrade() {
+  const box = document.getElementById('upgrade');
+  if (!box) return;
+  const title = document.getElementById('planPickerTitle');
+  const cardsEl = document.getElementById('planCards');
+  const footer = document.getElementById('planFooter');
+  const note = document.getElementById('planCurrencyNote');
+  cardsEl.textContent = '';
+  box.classList.toggle('plan-picker-pro', !!state.isPro);
+
+  if (state.isPro) {
+    title.textContent = msg('planYoureProTitle');
+    cardsEl.appendChild(cfEl('p', { className: 'plan-pro-text', textContent: msg('youArePro') }));
+    footer.hidden = true;
+    return;
+  }
+
+  title.textContent = msg('planPickerTitle');
+  footer.hidden = false;
+  note.hidden = true;
+  if (planCards === null) {
+    loadPlans();
+    return;
+  }
+  if (planCards.length === 0) {
+    // No prices to show: ExtensionPay's own page lists the plans
+    cardsEl.appendChild(cfEl('button', {
+      className: 'btn btn-primary plan-see-plans',
+      id: 'planSeePlansBtn',
+      textContent: msg('planSeePlans'),
+      onclick: () => chrome.runtime.sendMessage({ action: 'openPaymentPage', direct: true })
+    }));
+    return;
+  }
+  for (const card of planCards) cardsEl.appendChild(planCardEl(card));
+  const currency = cfPlansCurrencyToNote(planCards, cfUiLocale(msg));
+  if (currency) {
+    note.textContent = msg('planCurrencyNote', [currency]);
+    note.hidden = false;
+  }
+}
+
+// Shows the plan picker: the About tab, scrolled to the picker, which takes
+// the focus and is briefly highlighted.
+function showUpgradeSection() {
+  const box = document.getElementById('upgrade');
+  if (!box) return;
+  activateSection('about');
+  const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  box.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
+  box.classList.remove('plan-picker-focus');
+  void box.offsetWidth; // restart the highlight
+  box.classList.add('plan-picker-focus');
+  box.focus({ preventScroll: true });
+}
+
+// For the upgrade buttons on this page: the picker, with #upgrade in the URL.
+function openUpgrade() {
+  if (location.hash !== '#upgrade') history.replaceState(null, '', '#upgrade');
+  showUpgradeSection();
 }
 
 // ── Navigation ──
 
+function activateSection(name) {
+  document.querySelectorAll('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.section === name));
+  document.querySelectorAll('.section').forEach(s => s.classList.toggle('active', s.id === 'section-' + name));
+}
+
 function setupNav() {
   document.querySelectorAll('.nav-item').forEach(btn => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
-      document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
-      btn.classList.add('active');
-      document.getElementById('section-' + btn.dataset.section).classList.add('active');
+      activateSection(btn.dataset.section);
+      // Leaving the picker: a later #upgrade from the background is a change again
+      if (location.hash) history.replaceState(null, '', location.pathname + location.search);
     });
   });
+  // The background opens options.html#upgrade, or sets that hash on this tab
+  window.addEventListener('hashchange', () => {
+    if (location.hash === '#upgrade') showUpgradeSection();
+  });
+  if (location.hash === '#upgrade') showUpgradeSection();
 }
 
 // ── Buttons ──
 
 function setupButtons() {
-  // Null-checks: renderAbout() (called before setupButtons via renderAll)
-  // wipes the upgrade card content for Pro users, removing #upgradeBtn from
-  // the DOM. Without these checks, the addEventListener call throws and the
-  // rest of setupButtons never runs.
+  // Null-checks: a missing button must not stop the rest of setupButtons.
   const clearChannelsBtn = document.getElementById('clearChannelsBtn');
   if (clearChannelsBtn) clearChannelsBtn.addEventListener('click', async () => {
     if (confirm(msg('clearAllConfirm'))) {
@@ -1236,11 +1371,6 @@ function setupButtons() {
       renderChannels();
       renderBadge();
     }
-  });
-
-  const upgradeBtn = document.getElementById('upgradeBtn');
-  if (upgradeBtn) upgradeBtn.addEventListener('click', () => {
-    chrome.runtime.sendMessage({ action: 'openPaymentPage' });
   });
 
   const resetRecsBtn = document.getElementById('resetRecsBtn');
@@ -1323,7 +1453,9 @@ chrome.storage.onChanged.addListener(async (changes) => {
   const keys = Object.keys(changes);
   const statOnly = keys.length === 1 && keys[0] === 'stats';
   if (statOnly) return;
-  // Pro status re-checked with the same answer (content-dom.js)
+  // The background refreshed the Pro plans: new prices for the picker
+  if (changes.plansCache && !state.isPro) loadPlans();
+  // Pro status re-checked with the same answer, or the plans (content-dom.js)
   if (cfIsProBookkeepingOnly(changes)) return;
   await loadState();
   renderAll();

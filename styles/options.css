@@ -684,6 +684,132 @@ body {
   line-height: 1.5;
 }
 
+/* ── Plan picker (#upgrade) ── */
+.plan-picker {
+  scroll-margin-top: 16px;
+  outline: none;
+}
+
+.plan-picker [hidden] {
+  display: none !important;
+}
+
+/* Opened through #upgrade: a short highlight */
+.plan-picker.plan-picker-focus {
+  animation: plan-picker-focus 1.6s ease-out 1;
+}
+
+@keyframes plan-picker-focus {
+  0%   { box-shadow: 0 0 0 0 var(--accent-mid); border-color: var(--accent); }
+  25%  { box-shadow: 0 0 0 6px var(--accent-mid); border-color: var(--accent); }
+  100% { box-shadow: 0 0 0 0 transparent; border-color: var(--border); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .plan-picker.plan-picker-focus {
+    animation: none;
+    border-color: var(--accent);
+  }
+}
+
+.plan-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+  margin: 14px 0 16px;
+}
+
+.plan-picker-pro .plan-cards {
+  display: block;
+  margin: 0;
+}
+
+.plan-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.plan-card-featured {
+  border: 2px solid var(--accent);
+  background: var(--accent-light);
+  padding: 15px; /* the thicker border keeps the cards the same size */
+}
+
+.plan-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 20px;
+}
+
+.plan-card-name {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+
+.plan-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  padding: 3px 8px;
+  border-radius: 99px;
+  background: var(--accent);
+  color: oklch(99% 0.003 160);
+  white-space: nowrap;
+}
+
+.plan-card-price {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+.plan-card-detail,
+.plan-card-note {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+.plan-card-note {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.plan-card-spacer {
+  flex: 1;
+}
+
+.about-card .plan-card .btn {
+  margin-top: 6px;
+  width: 100%;
+}
+
+.about-card .plan-footer p {
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.about-card .plan-footer p.plan-currency-note,
+.about-card .plan-footer p.plan-stay-free {
+  color: var(--text-3);
+}
+
+.plan-cards .plan-see-plans {
+  justify-self: start;
+}
+
 /* --- Stats Dashboard --- */
 .stats-cards {
   display: grid;
