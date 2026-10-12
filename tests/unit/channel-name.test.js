@@ -6,7 +6,8 @@
 //     for real names, digits and non-Latin scripts included ("Il Sole 24 Ore",
 //     "4K Media", "1MILLIONTHINGS", "東海オンエア").
 //   - cfMenuBlockChannel(card): the channel the 3-dot "Block channel" item
-//     blocks. The card's own valid name; else, on a channel page, that page's
+//     blocks. The card's own name (trusted when the card links the channel's
+//     /@handle, else only when valid); else, on a channel page, that page's
 //     channel; else null (no block item). On a channel's Videos tab the cards
 //     show only "6.8M" and "3d ago" (observed live 2026-10-12): the item used
 //     to block a channel named "6.8M".
@@ -61,9 +62,11 @@ const NAMES = [
   'The FA', 'Big Fa',
 ];
 
-// Known limit: a text with a digit and no Latin word is rejected, so counts and
-// dates of every UI language are, also those whose words are not listed. A few
-// real names are lost with them (every non-Latin name was before v1.4).
+// Known limit of isValidChannelName only: a text with a digit and no Latin word
+// is rejected, so counts and dates of every UI language are, also those whose
+// words are not listed, and a few real names with them (every non-Latin name
+// was before v1.4). The 3-dot menu still offers these names when they come
+// from the card's /@handle link (see the cfMenuBlockChannel tests below).
 const NON_LATIN_WITH_DIGITS = ['Россия 24', 'ช่อง 3'];
 
 test('isValidChannelName rejects view and subscriber counts in common UI languages', () => {
@@ -166,6 +169,41 @@ test('cfMenuBlockChannel: a card with its own valid name blocks that channel', (
   const other = namedCard('Veritasium', '/@veritasium');
   const onChannel = load('/@mkbhd', channelPage('Marques Brownlee', other));
   assert.deepStrictEqual(plain(onChannel.cfMenuBlockChannel(other)), { name: 'Veritasium', id: 'veritasium' });
+});
+
+test('cfMenuBlockChannel: a name read from the card\'s channel link is trusted ("Россия 24", "2K")', () => {
+  // isValidChannelName rejects these (a digit and no Latin letter; a count
+  // shape), but link text is the channel's real name: the menu keeps its
+  // "Block channel" item, as before v1.4.
+  for (const [name, href, id] of [
+    ['Россия 24', '/@Russia24TV', 'Russia24TV'],
+    ['2K', '/@2K', '2K'],
+    ['חדשות 12', '/@N12News', 'N12News'],
+    ['ช่อง 8', '/@Ch8Thailand', 'Ch8Thailand'],
+  ]) {
+    const card = namedCard(name, href);
+    const onSearch = load('/results', el('ytd-search', {}, card));
+    assert.deepStrictEqual(plain(onSearch.cfMenuBlockChannel(card)), { name, id }, name);
+    // on another channel's page too: the card's own channel, not the page's
+    const card2 = namedCard(name, href);
+    const onChannel = load('/@mkbhd', channelPage('Marques Brownlee', card2));
+    assert.deepStrictEqual(plain(onChannel.cfMenuBlockChannel(card2)), { name, id }, name + ' on a channel page');
+  }
+});
+
+test('cfMenuBlockChannel: a name without a channel handle link is still checked', () => {
+  // legacy channel-name text with no /@ link: a count there is not a name
+  const card = el('ytd-video-renderer', {},
+    el('h3', {}, el('a', { href: '/watch?v=abcdefghijk' }, 'A video title')),
+    el('div', { id: 'channel-name' }, el('yt-formatted-string', { id: 'text' }, '6.8M')));
+  const onSearch = load('/results', el('ytd-search', {}, card));
+  assert.strictEqual(onSearch.YT.getChannelName(card), '6.8M', 'the legacy selector reads the text unchecked');
+  assert.strictEqual(onSearch.cfMenuBlockChannel(card), null);
+  // on a channel page it falls back to the page's channel
+  const card2 = el('ytd-video-renderer', {},
+    el('div', { id: 'channel-name' }, el('yt-formatted-string', { id: 'text' }, '6.8M')));
+  const onChannel = load('/@mkbhd/videos', channelPage('Marques Brownlee', card2));
+  assert.deepStrictEqual(plain(onChannel.cfMenuBlockChannel(card2)), { name: 'Marques Brownlee', id: '@mkbhd' });
 });
 
 test('cfMenuBlockChannel: no valid name anywhere gives null (no block item)', () => {

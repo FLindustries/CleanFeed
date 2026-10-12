@@ -357,8 +357,11 @@ function isValidChannelName(text) {
   // scripts write counts and dates with words not listed above ("680万回視聴",
   // "6,8 εκ. προβολές", "3 日前", "۶٫۸ میلیون"): a text with a digit and no
   // Latin letter is never a name. A lone K / M / B magnitude ("6.8M צפיות")
-  // does not count as Latin; "U2" and "B1A4" do. That loses a few names
-  // ("Россия 24"); before v1.4 every text without a Latin letter was rejected.
+  // does not count as Latin; "U2" and "B1A4" do. So a few real names
+  // ("Россия 24") fail here (before v1.4 every text without a Latin letter
+  // did). The 3-dot menu does not check a name read from the card's /@handle
+  // link (cfMenuBlockChannel); auto-tag, the metadata text getChannelName
+  // guesses from and the menu's page-channel fallback do.
   if (/\p{Nd}/u.test(t) &&
       !/\p{Script=Latin}/u.test(t.replace(/(^|[\s\p{Nd}])[kmb](?![\p{L}\p{N}])/giu, '$1'))) return false;
   if (cfIsCountText(t)) return false;
@@ -708,14 +711,16 @@ function getMenuInjectionAction(itemTokens, clickToken, clickAgeMs) {
 // The channel that the 3-dot menu's "Block channel" item blocks for `card`:
 // { name, id } (id as getChannelId / getPageChannelId give it, or null), or
 // null when no real channel name is known (then no block item is added).
-// The card's own name when valid; else, on a channel page, that page's
+// The card's own name: trusted when the card links its channel's /@handle
+// (link text is the real name, so "Россия 24" and "2K" keep their item),
+// else only when isValidChannelName. Else, on a channel page, that page's
 // channel: a channel's Videos and Shorts tabs show no channel on their cards,
 // only "6.8M" and "3d ago" (observed 2026-10-12). A nameless card that links
 // another channel's handle never gets the page's channel.
 function cfMenuBlockChannel(card) {
   const name = YT.getChannelName(card);
   const cardId = YT.getChannelId(card);
-  if (isValidChannelName(name)) return { name: name.trim(), id: cardId };
+  if (name && (cardId || isValidChannelName(name))) return { name: name.trim(), id: cardId };
   if (!YT.isChannelPage()) return null;
   const pageName = YT.getPageChannelName();
   if (!isValidChannelName(pageName)) return null;
