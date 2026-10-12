@@ -183,11 +183,11 @@
   }
 
   function isFilteringDisabledForPage() {
-    if (isPagePaused) return true;
-    if (isOutsideSchedule()) return true; // ADDED: schedule outside hours
-    const p = window.location.pathname;
-    if (p === '/feed/subscriptions' || p.startsWith('/feed/subscriptions')) return true;
-    return false;
+    return cfFilteringDisabledForPage({
+      paused: isPagePaused,
+      outsideSchedule: isOutsideSchedule(), // schedule outside hours
+      pathname: window.location.pathname
+    });
   }
 
   // Extract channel handle (lowercase, "@xyz") from a card or page. Returns null
@@ -1168,20 +1168,6 @@
 
   // ── Topic Detection Helpers ────────────────────────────────────────
 
-  function getBlockedCategoryForTitle(title) {
-    if (!title) return null;
-    for (const kw of blockedKeywords) {
-      const expandedTerms = getExpandedKeywords(kw.keyword);
-      for (const term of expandedTerms) {
-        // The blocked keyword itself: a category key for a topic block, the
-        // plain word otherwise (expandedTerms[0] is not reliable when the
-        // category word itself is a disabled synonym).
-        if (matchesKeyword(title, term)) return kw.keyword.toLowerCase();
-      }
-    }
-    return null;
-  }
-
   function detectTopicFromTitle(title) {
     if (!title) return null;
     // Match against ALL synonym categories (not just blocked ones).
@@ -1341,18 +1327,25 @@
     function shouldIntercept(e) {
       if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey) return null;
       if (e.target.closest('button, yt-icon-button, ytd-menu-renderer, yt-button-shape')) return null;
-      if (window.location.pathname === '/results') return null;
 
       const card = e.target.closest(YT.VIDEO_CARDS);
       if (!card) return null;
       if (document.getElementById('cleanfeed-suggested-prompt')) return null;
 
-      const title = YT.getVideoTitle(card);
-      const category = getBlockedCategoryForTitle(title);
+      // Same rules as hiding: no prompt on /results, where filtering is off
+      // (pause, Subscriptions feed, schedule), for a peeked card, an exempt
+      // title or a whitelisted channel. `category` is the blocked keyword.
+      const category = cfSuggestedPromptKeyword({
+        pathname: window.location.pathname,
+        paused: isPagePaused,
+        outsideSchedule: isOutsideSchedule(),
+        peeked: isCardPeeked(card),
+        title: YT.getVideoTitle(card),
+        channelName: YT.getChannelName(card),
+        blockedKeywords,
+        isWhitelisted
+      });
       if (!category) return null;
-
-      const channelName = YT.getChannelName(card);
-      if (isWhitelisted(channelName, category)) return null;
 
       const link = card.querySelector('a[href*="/watch"], a[href*="/shorts"]');
       const href = link ? link.href : null;

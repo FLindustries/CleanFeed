@@ -739,6 +739,44 @@ function cfCategoryVideoKey(videoId, title) {
   return t ? 't:' + t.slice(0, 100) : null;
 }
 
+// --- Page "off" states and the Watch/Skip prompt ---
+
+// True when CleanFeed filters nothing on this page: the user paused it, the
+// schedule says "off" right now, or it is the Subscriptions feed (the user
+// curated those channels, so filtering there only gets in the way).
+//   state: { paused, outsideSchedule, pathname }
+function cfFilteringDisabledForPage(state) {
+  if (state.paused || state.outsideSchedule) return true;
+  return String(state.pathname || '').startsWith('/feed/subscriptions');
+}
+
+// Decides whether a click on a video card opens the Watch/Skip prompt
+// (content.js interceptSuggestedClicks). Returns the blocked keyword exactly as
+// stored (a topic key like "gaming" for a synonym match, never the matching
+// synonym itself), or null when the click must go through untouched. The
+// prompt follows the same rules as hiding, so it never fires where a video
+// would not have been hidden:
+//   - no prompt on /results, nor wherever filtering is off for the page
+//   - no prompt for a peeked card ("Show just now")
+//   - a keyword whose topic exempts the title, or whose whitelist covers the
+//     channel, is skipped and the next blocked keyword is tried (as filterPage does)
+//   state: { pathname, paused, outsideSchedule, peeked, title, channelName,
+//            blockedKeywords: [{ keyword }], isWhitelisted(channelName, keyword) }
+function cfSuggestedPromptKeyword(state) {
+  if (!state || !state.title || state.peeked) return null;
+  if (state.pathname === '/results') return null;
+  if (cfFilteringDisabledForPage(state)) return null;
+  const isWhitelisted = typeof state.isWhitelisted === 'function' ? state.isWhitelisted : () => false;
+  for (const kw of state.blockedKeywords || []) {
+    if (!kw || !kw.keyword) continue;
+    if (!getExpandedKeywords(kw.keyword).some(term => matchesKeyword(state.title, term))) continue;
+    if (isWhitelisted(state.channelName, kw.keyword)) continue;
+    if (isCategoryExempt(state.title, kw.keyword.toLowerCase())) continue;
+    return kw.keyword;
+  }
+  return null;
+}
+
 // --- Keyword suggestions (CF+ quick-add popover and Channel Scan) ---
 //
 // Pure helpers that turn video titles into the phrases offered for blocking.
