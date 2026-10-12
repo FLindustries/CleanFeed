@@ -1193,35 +1193,8 @@ function renderInterests() {
 // opens options.html#upgrade. Prices come from ExtensionPay (getPlans), never
 // from this file; each card opens that plan's checkout.
 
-// cfBuildPlanCards() cards (content-dom.js); null until getPlans answers
-let planCards = null;
-let plansLoading = null;  // the getPlans request in flight
-let plansReload = false;  // ask again once it answers (the plans changed meanwhile)
-
-function loadPlans() {
-  if (plansLoading) {
-    plansReload = true;
-    return plansLoading;
-  }
-  plansLoading = (async () => {
-    let plans = [];
-    try {
-      const res = await chrome.runtime.sendMessage({ action: 'getPlans' });
-      if (res && Array.isArray(res.plans)) plans = res.plans;
-    } catch (e) {
-      console.warn('CleanFeed: could not load the Pro plans', e);
-    }
-    planCards = cfBuildPlanCards(plans, cfUiLocale(msg), new Date());
-    renderUpgrade();
-  })().finally(() => {
-    plansLoading = null;
-    if (plansReload) {
-      plansReload = false;
-      loadPlans();
-    }
-  });
-  return plansLoading;
-}
+// The Pro plans from the background, as cfBuildPlanCards() cards (content-dom.js)
+const planLoader = cfCreatePlansLoader(msg, renderUpgrade);
 
 function planCardEl(card) {
   const featured = card.kind === 'yearly';
@@ -1293,11 +1266,12 @@ function renderUpgrade() {
   title.textContent = msg('planPickerTitle');
   footer.hidden = false;
   note.hidden = true;
-  if (planCards === null) {
-    loadPlans();
+  const cards = planLoader.cards();
+  if (cards === null) {
+    planLoader.load();
     return;
   }
-  if (planCards.length === 0) {
+  if (cards.length === 0) {
     // No prices to show: ExtensionPay's own page lists the plans
     cardsEl.appendChild(cfEl('button', {
       className: 'btn btn-primary plan-see-plans',
@@ -1307,8 +1281,8 @@ function renderUpgrade() {
     }));
     return;
   }
-  for (const card of planCards) cardsEl.appendChild(planCardEl(card));
-  const currency = cfPlansCurrencyToNote(planCards, cfUiLocale(msg));
+  for (const card of cards) cardsEl.appendChild(planCardEl(card));
+  const currency = cfPlansCurrencyToNote(cards, cfUiLocale(msg));
   if (currency) {
     note.textContent = msg('planCurrencyNote', [currency]);
     note.hidden = false;
@@ -1454,7 +1428,7 @@ chrome.storage.onChanged.addListener(async (changes) => {
   const statOnly = keys.length === 1 && keys[0] === 'stats';
   if (statOnly) return;
   // The background refreshed the Pro plans: new prices for the picker
-  if (changes.plansCache && !state.isPro) loadPlans();
+  if (changes.plansCache && !state.isPro) planLoader.load();
   // Pro status re-checked with the same answer, or the plans (content-dom.js)
   if (cfIsProBookkeepingOnly(changes)) return;
   await loadState();

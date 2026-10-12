@@ -166,44 +166,20 @@ function renderControls() {
   }
 }
 
-// cfBuildPlanCards() cards (content-dom.js); null until getPlans answers
-let planCards = null;
-let plansLoading = null;  // the getPlans request in flight
-let plansReload = false;  // ask again once it answers (the plans changed meanwhile)
-
-function loadPlans() {
-  if (plansLoading) {
-    plansReload = true;
-    return plansLoading;
-  }
-  plansLoading = (async () => {
-    let plans = [];
-    try {
-      const res = await chrome.runtime.sendMessage({ action: 'getPlans' });
-      if (res && Array.isArray(res.plans)) plans = res.plans;
-    } catch (e) { /* no line */ }
-    planCards = cfBuildPlanCards(plans, cfUiLocale(cfMsg), new Date());
-    renderPlansLine();
-  })().finally(() => {
-    plansLoading = null;
-    if (plansReload) {
-      plansReload = false;
-      loadPlans();
-    }
-  });
-  return plansLoading;
-}
+// The Pro plans from the background, as cfBuildPlanCards() cards (content-dom.js)
+const planLoader = cfCreatePlansLoader(cfMsg, renderPlansLine);
 
 // The line under "Upgrade to Pro"; empty and hidden without plans.
 function renderPlansLine() {
   const line = document.getElementById('upgradePlans');
   if (!line) return;
-  if (planCards === null) {
+  const cards = planLoader.cards();
+  if (cards === null) {
     line.hidden = true;
-    loadPlans();
+    planLoader.load();
     return;
   }
-  const text = cfPlansLine(planCards, cfMsg);
+  const text = cfPlansLine(cards, cfMsg);
   line.textContent = text;
   line.hidden = !text;
 }
@@ -609,7 +585,7 @@ chrome.storage.onChanged.addListener(async (changes) => {
   // Skip re-render if we're mid-toggle update to avoid reverting visual state
   if (settingsUpdateInFlight && keys.length === 1 && keys[0] === 'settings') return;
   // The background refreshed the Pro plans: new prices for the upgrade line
-  if (changes.plansCache && document.getElementById('upgradePlans')) loadPlans();
+  if (changes.plansCache && document.getElementById('upgradePlans')) planLoader.load();
   // Pro status re-checked with the same answer, or the plans (content-dom.js)
   if (cfIsProBookkeepingOnly(changes)) return;
   await loadState();

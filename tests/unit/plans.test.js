@@ -9,6 +9,10 @@
 //   - cfPlansLine(cards, getMessage): the popup's line under "Upgrade to Pro".
 //   - cfPlansCurrencyToNote(cards, uiLang): the currency a "Prices in ..." note
 //     names, or null when the UI language's readers pay in it already.
+//   - cfCreatePlansLoader(getMessage, onCards): the one copy of the pages'
+//     plans loader (popup.js and options.js): getPlans -> cards -> onCards; a
+//     load() while one is in flight asks exactly once more after it; a failed
+//     request is logged and renders no plans.
 //   - background.js getPlans: ExtPay getPlans() normalized and cached in
 //     chrome.storage.local `plansCache` ({ plans, fetchedAt }) for 24 h; a
 //     stale cache answers at once and refreshes in the background; a failure
@@ -195,6 +199,112 @@ test('cfUiLocale: the locale of the shown messages, "en" when unknown', () => {
   assert.strictEqual(cf.cfUiLocale(key => cf.cfFormatMessage(LOCALES.en[key])), 'en');
   assert.strictEqual(cf.cfUiLocale(key => cf.cfFormatMessage(LOCALES.it[key])), 'it');
   assert.strictEqual(cf.cfUiLocale(key => key), 'en', 'a missing message returns its key');
+});
+
+// --- cfCreatePlansLoader: the popup's and the options page's plans loader ---
+
+const flush = () => new Promise(resolve => setImmediate(resolve));
+
+// content-dom.js in a vm with a fake background: every getPlans request waits
+// until the test answers it (requests[i].resolve / reject). `lang` is what the
+// page's message helper says for uiLocale.
+function plansLoaderPage(lang) {
+  const requests = [];
+  const warnings = [];
+  const rendered = [];
+  const cf = loadContentDom({
+    chrome: {
+      runtime: {
+        sendMessage(request) {
+          return new Promise((resolve, reject) => requests.push({ request: plain(request), resolve, reject }));
+        }
+      }
+    },
+    console: Object.assign(Object.create(console), { warn: (...args) => warnings.push(args.map(String).join(' ')) })
+  });
+  assert.strictEqual(typeof cf.cfCreatePlansLoader, 'function', 'content-dom.js defines cfCreatePlansLoader');
+  const getMessage = key => (key === 'uiLocale' ? (lang || 'en') : key);
+  const loader = cf.cfCreatePlansLoader(getMessage, cards => rendered.push(plain(cards)));
+  return { loader, requests, warnings, rendered };
+}
+
+test('cfCreatePlansLoader: load() asks getPlans once, builds the cards and hands them to onCards', async () => {
+  const page = plansLoaderPage('en');
+  assert.strictEqual(page.loader.cards(), null, 'no cards before the first answer');
+  const done = page.loader.load();
+  assert.deepStrictEqual(page.requests.map(r => r.request), [{ action: 'getPlans' }]);
+  page.requests[0].resolve({ plans: PLANNED });
+  await done;
+  await flush();
+  assert.strictEqual(page.requests.length, 1, 'no follow-up request without a second load()');
+  assert.deepStrictEqual(page.rendered.map(cards => cards.map(c => c.price)), [['$2.99', '$19.99', '$29.99']]);
+  assert.deepStrictEqual(plain(page.loader.cards()), page.rendered[0]);
+  assert.deepStrictEqual(page.warnings, []);
+});
+
+test('cfCreatePlansLoader: a load() while one is in flight causes exactly one follow-up request', async () => {
+  const page = plansLoaderPage('en');
+  const first = page.loader.load();
+  const second = page.loader.load();
+  page.loader.load(); // a third one while the first is still in flight
+  assert.strictEqual(second, first, 'a load() in flight is shared');
+  assert.strictEqual(page.requests.length, 1, 'no second request while one is in flight');
+
+  page.requests[0].resolve({ plans: LIVE });
+  await first;
+  await flush();
+  assert.strictEqual(page.requests.length, 2, 'exactly one follow-up request once the first answers');
+  assert.deepStrictEqual(page.requests[1].request, { action: 'getPlans' });
+
+  page.requests[1].resolve({ plans: PLANNED });
+  await flush();
+  assert.strictEqual(page.requests.length, 2, 'the follow-up asks no further');
+  assert.deepStrictEqual(page.rendered.map(cards => cards.map(c => c.price)), [
+    ['$3.99', '$29.99'],
+    ['$2.99', '$19.99', '$29.99']
+  ], 'onCards ran for each answer, the newer plans last');
+  assert.deepStrictEqual(plain(page.loader.cards()).map(c => c.kind), ['monthly', 'yearly', 'lifetime']);
+
+  page.loader.load();
+  assert.strictEqual(page.requests.length, 3, 'a load() after both answered asks again');
+});
+
+test('cfCreatePlansLoader: a failed getPlans is logged and renders no plans', async () => {
+  const page = plansLoaderPage('en');
+  const done = page.loader.load();
+  page.requests[0].reject(new Error('Could not establish connection. Receiving end does not exist.'));
+  await done;
+  assert.deepStrictEqual(page.rendered, [[]]);
+  assert.deepStrictEqual(plain(page.loader.cards()), []);
+  assert.strictEqual(page.warnings.length, 1, 'one console.warn');
+  assert.match(page.warnings[0], /CleanFeed: could not load the Pro plans/);
+  assert.match(page.warnings[0], /Could not establish connection/);
+
+  // An answer with no plans list is no plans, and not an error
+  const again = page.loader.load();
+  page.requests[1].resolve(undefined);
+  await again;
+  assert.deepStrictEqual(page.rendered, [[], []]);
+  assert.strictEqual(page.warnings.length, 1);
+});
+
+test('cfCreatePlansLoader: prices are formatted for the page\'s own UI locale', async () => {
+  const page = plansLoaderPage('it');
+  const done = page.loader.load();
+  page.requests[0].resolve({ plans: PLANNED });
+  await done;
+  const monthly = page.rendered[0].find(c => c.kind === 'monthly');
+  assert.ok(monthly.price.includes('2,99') && monthly.price.includes('USD'), monthly.price);
+});
+
+test('popup.js and options.js keep no copy of the plans loader', () => {
+  for (const file of ['popup.js', 'options.js']) {
+    const src = read(file).replace(/\/\/.*$/gm, ''); // code only, not comments
+    assert.ok(/cfCreatePlansLoader\(/.test(src), `${file} does not use cfCreatePlansLoader`);
+    assert.ok(!/action:\s*'getPlans'/.test(src), `${file} still asks getPlans itself`);
+    assert.ok(!/cfBuildPlanCards\(/.test(src), `${file} still builds the plan cards itself`);
+    assert.ok(!/^(?:let|var)\s+(?:planCards|plansLoading|plansReload)\b/m.test(src), `${file} still keeps loader state of its own`);
+  }
 });
 
 // --- locales ---

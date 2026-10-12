@@ -216,6 +216,49 @@ function cfPlansCurrencyToNote(cards, uiLang) {
   return CF_LOCALE_CURRENCY[lang] === codes[0] ? null : codes[0];
 }
 
+// The plans loader of popup.html (the line under "Upgrade to Pro") and
+// options.html (the plan picker); never used on YouTube pages.
+// `getMessage` is the page's message helper (its uiLocale formats the
+// prices); `onCards(cards)` renders cfBuildPlanCards() cards. Returns:
+//   load()  asks the background (getPlans), builds the cards, calls onCards
+//           and resolves. A load() while one is in flight shares it and makes
+//           exactly one more request once it answers (the plans changed
+//           meanwhile), however many came in. A failed request is logged and
+//           counts as no plans (cards []).
+//   cards() the last cards, or null until the first answer.
+function cfCreatePlansLoader(getMessage, onCards) {
+  let cards = null;
+  let inFlight = null;     // the getPlans request being answered
+  let askAgain = false;    // load() was called while it was in flight
+
+  function load() {
+    if (inFlight) {
+      askAgain = true;
+      return inFlight;
+    }
+    inFlight = (async () => {
+      let plans = [];
+      try {
+        const res = await chrome.runtime.sendMessage({ action: 'getPlans' });
+        if (res && Array.isArray(res.plans)) plans = res.plans;
+      } catch (e) {
+        console.warn('CleanFeed: could not load the Pro plans', e);
+      }
+      cards = cfBuildPlanCards(plans, cfUiLocale(getMessage), new Date());
+      onCards(cards);
+    })().finally(() => {
+      inFlight = null;
+      if (askAgain) {
+        askAgain = false;
+        load();
+      }
+    });
+    return inFlight;
+  }
+
+  return { load, cards: () => cards };
+}
+
 // Validates a string as a plausible channel name. YouTube's metadata spans
 // can contain separators ("•", "·"), view counts ("1 Mln di visualizzazioni"),
 // dates ("3 giorni fa"), or the channel's own dot — none of which are real
