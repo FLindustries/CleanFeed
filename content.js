@@ -18,6 +18,10 @@
   // script world), ran this page before: this one takes the page over and
   // clears what the older one left before its first filter pass.
   const takesOverPage = cfPageRanCleanFeed(document);
+  // An older instance from a CleanFeed before 1.4.0 (it set no marker) cannot
+  // stop: it keeps running next to this one until the page reloads, so init()
+  // asks the user for that reload.
+  const followsLegacyInstance = cfPageRanLegacyCleanFeed(document);
   document.documentElement.setAttribute(CF_INSTANCE_ATTR, instanceId);
   // Every page / document / window listener is added with this signal, so
   // stopInstance() removes them all at once.
@@ -389,6 +393,9 @@
     // Taking over from an orphaned instance: drop its UI, hidden videos and
     // markers right before this instance's first pass (same task: no flash).
     if (takesOverPage) cfClearCleanFeedPage(document);
+    // The older one hides cards again after the user unblocks something and
+    // adds its own menu items: only a reload ends it.
+    if (followsLegacyInstance) showToast(reloadNoticeText, 10000);
     applyState(state);
 
     filterPage();
@@ -491,8 +498,8 @@
     for (const ch of channels) {
       if (ch.name) blockedChannelNames.add(ch.name.toLowerCase());
       if (ch.id) {
-        const handle = ch.id.startsWith('@') ? ch.id.toLowerCase() : '@' + ch.id.toLowerCase();
-        blockedChannelHandles.add(handle);
+        const handle = cfChannelHandle(ch.id); // also an old '@name/videos'
+        if (handle) blockedChannelHandles.add(handle);
       }
     }
 
@@ -1632,7 +1639,12 @@
     // repeat call for the same click changes nothing, also for cards without a
     // channel name (topic item only). Items are added only to a popup opened
     // shortly after a click inside a card; stale ones are removed.
-    const existing = popup.querySelectorAll('.cleanfeed-menu-item, .cleanfeed-menu-separator');
+    // Only items with a token are ours. Items without one come from a
+    // CleanFeed older than 1.4.0 still running in this tab since the update:
+    // they are never touched (that instance adds them again at once, and the
+    // two removed and re-added items forever: the tab froze). content.css
+    // hides them.
+    const existing = popup.querySelectorAll('.cleanfeed-menu-item[data-cf-menu-token], .cleanfeed-menu-separator[data-cf-menu-token]');
     const clickToken = lastClickedVideoCard ? lastMenuClickToken : '';
     const action = getMenuInjectionAction(
       Array.from(existing, el => el.dataset.cfMenuToken || ''),
@@ -1669,6 +1681,13 @@
         break;
       }
     }
+
+    // Ours go after the older instance's items: it checks only the first
+    // CleanFeed item in the popup and, if that one is not its own, removes
+    // every item (ours too) and adds its own again.
+    const legacyItems = Array.from(listbox.children).filter(el =>
+      el.matches('.cleanfeed-menu-item, .cleanfeed-menu-separator') && !el.hasAttribute('data-cf-menu-token'));
+    if (legacyItems.length > 0) insertAfter = legacyItems[legacyItems.length - 1];
 
     // Insert point reference
     let lastInserted = insertAfter;
@@ -1753,8 +1772,8 @@
     // Keep handles set in sync so the pre-hide CSS rule rebuild catches this
     // channel by /@ href immediately (otherwise cards by handle remained
     // visible until the next applyState cycle).
-    if (id) {
-      const handleLower = id.startsWith('@') ? id.toLowerCase() : '@' + id.toLowerCase();
+    const handleLower = cfChannelHandle(id);
+    if (handleLower) {
       blockedChannelHandles.add(handleLower);
       updateBlockedChannelPreHideStyles();
     }

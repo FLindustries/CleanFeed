@@ -127,6 +127,33 @@ test('getPageChannelId on a channel page ignores the hidden watch page owner', (
   assert.strictEqual(c4.cf.YT.getPageChannelId(), '@veritasium');
 });
 
+// 2025 channel page with no handle link in the header: the URL is the only
+// source of the handle, and a channel tab (/videos, /shorts, ...) is not part of it.
+test('getPageChannelName/Id on a channel tab read the handle from the URL without the tab', () => {
+  for (const tab of ['videos', 'shorts', 'streams', 'featured']) {
+    const { cf } = withPages('/@mkbhd/' + tab, [el('ytd-browse', { 'page-subtype': 'channels' })]);
+    assert.strictEqual(cf.YT.getPageChannelId(), '@mkbhd', tab);
+    assert.strictEqual(cf.YT.getPageChannelName(), 'mkbhd', tab);
+  }
+  const root = withPages('/@mkbhd', [el('ytd-browse', { 'page-subtype': 'channels' })]);
+  assert.strictEqual(root.cf.YT.getPageChannelId(), '@mkbhd');
+  const encoded = withPages('/@caf%C3%A9/videos', [el('ytd-browse', { 'page-subtype': 'channels' })]);
+  assert.strictEqual(encoded.cf.YT.getPageChannelName(), 'café');
+  const byId = withPages('/channel/UCBJycsmduvYEL83R_U4JriQ/videos', [el('ytd-browse', { 'page-subtype': 'channels' })]);
+  assert.strictEqual(byId.cf.YT.getPageChannelId(), 'UCBJycsmduvYEL83R_U4JriQ');
+});
+
+test('cfChannelHandle: a lowercase @handle, also for an id stored with a channel tab', () => {
+  const { cfChannelHandle } = loadContentDom();
+  assert.strictEqual(cfChannelHandle('@MKBHD'), '@mkbhd');
+  assert.strictEqual(cfChannelHandle('mkbhd'), '@mkbhd');
+  // stored by versions before 1.4.0 when blocking from a channel's tab
+  assert.strictEqual(cfChannelHandle('@mkbhd/videos'), '@mkbhd');
+  assert.strictEqual(cfChannelHandle('@MKBHD/shorts'), '@mkbhd');
+  assert.strictEqual(cfChannelHandle('UCBJycsmduvYEL83R_U4JriQ/videos'), '@ucbjycsmduvyel83r_u4jriq');
+  for (const none of ['', null, undefined, '/videos']) assert.strictEqual(cfChannelHandle(none), '', String(none));
+});
+
 test('getPageChannelName/Id on a watch page read the visible owner, not a hidden channel page', () => {
   const { cf } = withPages('/watch', [c4ChannelPage('Veritasium', '@veritasium', { hidden: '' }), visibleWatchPage()]);
   assert.strictEqual(cf.YT.getPageChannelName(), 'Marques Brownlee');

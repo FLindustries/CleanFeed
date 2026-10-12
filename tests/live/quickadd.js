@@ -11,6 +11,11 @@
 // Scenario "scan": on a channel's Videos tab the Scan modal lists candidates, each
 // one matches at least one of the page's titles; ticking one and clicking
 // "Add selected" stores a keyword that matches a title.
+// Scenarios "CF+ layout" (channel Videos and Shorts tabs, search results with
+// Shorts, a watch page's side column; `node tests/live/quickadd.js layout` runs
+// only these): on up to 2 cards of each card type, the CF+ button does not
+// overlap YouTube's 3-dot button; with the pointer on CF+ it shows and takes
+// the click, and the 3-dot button's centre still takes its own click.
 // "precondition" entries in the report say a scenario found nothing to test
 // (YouTube picks the results); they are reported, not failures.
 // Prints a JSON report; exit 0 only if every scenario that could run passed.
@@ -22,6 +27,14 @@ const GAME_SEARCH_URL = 'https://www.youtube.com/results?search_query=' + encode
 const CYRILLIC_SEARCH_URL = 'https://www.youtube.com/results?search_query=' + encodeURIComponent('обзор игры');
 const CHANNEL_VIDEOS_URL = 'https://www.youtube.com/@mkbhd/videos';
 const MARK = 'data-cf-live-quickadd';
+// Pages of the CF+ layout scenario: grid cards, Shorts grid cards, search
+// results with a Shorts shelf, and the watch page's side column.
+const LAYOUT_PAGES = [
+  ['CF+ layout: channel Videos tab', CHANNEL_VIDEOS_URL],
+  ['CF+ layout: channel Shorts tab', 'https://www.youtube.com/@mkbhd/shorts'],
+  ['CF+ layout: search results and Shorts', 'https://www.youtube.com/results?search_query=mkbhd'],
+  ['CF+ layout: watch page side column', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ']
+];
 
 // Runs in the page (main world). Marks the first visible card whose title (read
 // the way the popover reads it, passed in) matches the regex source.
@@ -201,9 +214,105 @@ async function runScanScenario(page, cs) {
   return result;
 }
 
+// Runs in the page: marks the n-th visible outermost card of each card type
+// that carries a CF+ button and a 3-dot button, and returns where both are.
+// `overlap` is the area (px²) the two buttons share.
+function layoutTargets({ cardSelector, perType, mark, reSource }) {
+  document.querySelectorAll('[' + mark + ']').forEach(el => el.removeAttribute(mark));
+  const re = new RegExp(reSource, 'i');
+  const seen = {};
+  const out = [];
+  for (const card of document.querySelectorAll(cardSelector)) {
+    if (card.parentElement && card.parentElement.closest(cardSelector)) continue; // nested card
+    const tag = card.tagName.toLowerCase();
+    if ((seen[tag] || 0) >= perType) continue;
+    const r = card.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0 || card.classList.contains('cleanfeed-hidden')) continue;
+    const cf = card.querySelector(':scope > .cleanfeed-quickadd-btn');
+    const menuBtn = Array.from(card.querySelectorAll('button')).find(b => re.test((b.getAttribute('aria-label') || '').trim()));
+    if (!cf || !menuBtn || menuBtn.getClientRects().length === 0) continue;
+    seen[tag] = (seen[tag] || 0) + 1;
+    card.setAttribute(mark, String(out.length));
+    const a = cf.getBoundingClientRect();
+    const b = menuBtn.getBoundingClientRect();
+    const overlap = Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left)) *
+      Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top));
+    out.push({ tag, overlap: Math.round(overlap) });
+  }
+  return out;
+}
+
+// Runs in the page: scrolls the CF+ button of the index-th marked card to the
+// middle and returns its centre.
+function cfCentre({ mark, index }) {
+  const card = document.querySelector('[' + mark + '="' + index + '"]');
+  if (!card) return null;
+  const cf = card.querySelector(':scope > .cleanfeed-quickadd-btn');
+  cf.scrollIntoView({ block: 'center' });
+  const r = cf.getBoundingClientRect();
+  return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+}
+
+// Runs in the page, with the pointer on the card's CF+ button: CF+ shows and
+// takes the click there, and the centre of the 3-dot button still belongs to
+// the 3-dot button.
+function hitCheck({ mark, index, reSource }) {
+  const card = document.querySelector('[' + mark + '="' + index + '"]');
+  if (!card) return null;
+  const re = new RegExp(reSource, 'i');
+  const cf = card.querySelector(':scope > .cleanfeed-quickadd-btn');
+  const menuBtn = Array.from(card.querySelectorAll('button')).find(b => re.test((b.getAttribute('aria-label') || '').trim()));
+  const centre = el => { const r = el.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; };
+  const describe = el => el ? el.tagName.toLowerCase() + '.' + String(el.className).slice(0, 40) : 'nothing';
+  const inView = ([x, y]) => x >= 0 && y >= 0 && x < innerWidth && y < innerHeight;
+  const cfHit = document.elementFromPoint(...centre(cf));
+  const menuHit = document.elementFromPoint(...centre(menuBtn));
+  return {
+    inView: inView(centre(cf)) && inView(centre(menuBtn)),
+    cfShown: getComputedStyle(cf).opacity === '1',
+    cfTakesClick: !!cfHit && (cfHit === cf || cf.contains(cfHit)),
+    cfHit: describe(cfHit),
+    menuTakesClick: !!menuHit && (menuHit === menuBtn || menuBtn.contains(menuHit)),
+    menuHit: describe(menuHit)
+  };
+}
+
+// CF+ never covers YouTube's 3-dot button (where "Block channel permanently"
+// lives) and stays clickable while the pointer is on the card. Checks up to 2
+// cards of each card type on the page.
+async function runLayoutScenario(page, name, url) {
+  const result = { name, url, cards: [] };
+  // Tall enough that a card of the first row fits below the channel header
+  await h.withTimeout(page.setViewportSize({ width: 1280, height: 1100 }), 5000, 'set viewport');
+  await h.gotoYouTube(page, url);
+  await h.waitForFilter(page, { settleMs: 3500 });
+  const targets = await h.evalInPage(page, layoutTargets, {
+    cardSelector: h.CARD_SELECTOR, perType: 2, mark: MARK, reSource: '^(more actions|action menu)$'
+  });
+  if (targets.length === 0) {
+    result.precondition = 'no card with both a CF+ and a 3-dot button';
+    result.ok = true;
+    return result;
+  }
+  for (let index = 0; index < targets.length; index++) {
+    await h.evalInPage(page, cfCentre, { mark: MARK, index });
+    await h.sleep(400);
+    const point = await h.evalInPage(page, cfCentre, { mark: MARK, index }); // after lazy content settled
+    const hit = point && await (async () => {
+      await h.withTimeout(page.mouse.move(point.x, point.y, { steps: 3 }), 3000, 'hover CF+');
+      await h.sleep(500);
+      return h.evalInPage(page, hitCheck, { mark: MARK, index, reSource: '^(more actions|action menu)$' });
+    })();
+    result.cards.push(Object.assign({}, targets[index], hit || { error: 'the card is gone' }));
+    await h.withTimeout(page.mouse.move(2, 2), 3000, 'move pointer away');
+  }
+  result.ok = result.cards.every(c => !c.error && c.inView && c.overlap === 0 && c.cfShown && c.cfTakesClick && c.menuTakesClick);
+  return result;
+}
+
 async function main() {
   const startedAt = Date.now();
-  const cancelWatchdog = h.watchdog(240000);
+  const cancelWatchdog = h.watchdog(360000);
   let report;
   try {
     await h.launch();
@@ -212,15 +321,20 @@ async function main() {
     const cs = await h.attachContentWorld(page);
 
     const scenarios = [];
-    scenarios.push(await runPopoverScenario(
-      page, cs, 'apostrophe/hyphen', GAME_SEARCH_URL, "\\p{L}['\u2019-]\\p{L}",
-      chips => chips.find(c => !c.disabled && !c.multi && /\p{L}['\u2019-]\p{L}/u.test(c.text))
-    ));
-    scenarios.push(await runPopoverScenario(
-      page, cs, 'Cyrillic', CYRILLIC_SEARCH_URL, '[\\u0400-\\u04FF]{4,}',
-      chips => chips.find(c => !c.disabled && !c.multi && /^[\u0400-\u04FF]{4,}$/.test(c.text))
-    ));
-    scenarios.push(await runScanScenario(page, cs));
+    // `node tests/live/quickadd.js layout` runs only the CF+ layout scenarios
+    if (process.argv[2] !== 'layout') {
+      scenarios.push(await runPopoverScenario(
+        page, cs, 'apostrophe/hyphen', GAME_SEARCH_URL, "\\p{L}['\u2019-]\\p{L}",
+        chips => chips.find(c => !c.disabled && !c.multi && /\p{L}['\u2019-]\p{L}/u.test(c.text))
+      ));
+      scenarios.push(await runPopoverScenario(
+        page, cs, 'Cyrillic', CYRILLIC_SEARCH_URL, '[\\u0400-\\u04FF]{4,}',
+        chips => chips.find(c => !c.disabled && !c.multi && /^[\u0400-\u04FF]{4,}$/.test(c.text))
+      ));
+      scenarios.push(await runScanScenario(page, cs));
+    }
+    await h.setStorage({ blockedKeywords: [] });
+    for (const [name, url] of LAYOUT_PAGES) scenarios.push(await runLayoutScenario(page, name, url));
 
     report = { ok: scenarios.every(s => s.ok), scenarios, elapsedMs: Date.now() - startedAt };
   } catch (err) {

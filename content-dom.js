@@ -263,8 +263,8 @@ const YT = {
         if (text) return text;
       }
     }
-    // Fallback: extract from URL path
-    const pathMatch = window.location.pathname.match(/^\/@(.+)/);
+    // Fallback: extract from URL path (the handle only: not the tab in /@name/videos)
+    const pathMatch = window.location.pathname.match(/^\/@([^\/?#]+)/);
     if (pathMatch) return decodeURIComponent(pathMatch[1]);
     return null;
   },
@@ -276,10 +276,11 @@ const YT = {
     const href = link?.getAttribute('href') || '';
     const match = href.match(/@([^\/\?]+)/);
     if (match) return '@' + match[1];
-    // Fallback: extract from URL
-    const pathMatch = window.location.pathname.match(/^\/@(.+)/);
+    // Fallback: extract from URL (the handle or id only: not the tab in
+    // /@name/videos or /channel/UC.../videos)
+    const pathMatch = window.location.pathname.match(/^\/@([^\/?#]+)/);
     if (pathMatch) return '@' + pathMatch[1];
-    const channelMatch = window.location.pathname.match(/\/channel\/(.+)/);
+    const channelMatch = window.location.pathname.match(/\/channel\/([^\/?#]+)/);
     if (channelMatch) return channelMatch[1];
     return null;
   },
@@ -358,6 +359,18 @@ const YT = {
     );
   }
 };
+
+// --- Channel handles ---
+
+// Lowercase '@handle' for a stored or detected channel id ('' for none).
+// Versions before 1.4.0 could store the channel page's tab with the handle
+// ('@name/videos', blocked from that tab): only the part before the first '/'
+// is the handle.
+function cfChannelHandle(id) {
+  const handle = String(id || '').split('/')[0].toLowerCase();
+  if (!handle) return '';
+  return handle.startsWith('@') ? handle : '@' + handle;
+}
 
 // --- 3-dot menu injection decision ---
 
@@ -1204,6 +1217,14 @@ const CF_INSTANCE_ATTR = 'data-cleanfeed-instance';
 function cfPageRanCleanFeed(doc) {
   return doc.documentElement.hasAttribute(CF_INSTANCE_ATTR) ||
     !!doc.querySelector('[id^="cleanfeed-"], [data-cf-checked], [data-cf-quickadd-injected]');
+}
+
+// True when a CleanFeed older than 1.4.0 ran in `doc`: its traces, no marker.
+// That version has no way to stop: it keeps running in the tab next to the new
+// instance (hiding cards again, adding its own menu items) until the page is
+// reloaded.
+function cfPageRanLegacyCleanFeed(doc) {
+  return !doc.documentElement.hasAttribute(CF_INSTANCE_ATTR) && cfPageRanCleanFeed(doc);
 }
 
 // True when `err` (a thrown error or chrome.runtime.lastError) says the

@@ -84,20 +84,28 @@ function findClickPoint(selector) {
   return { covered: cover ? cover.tagName.toLowerCase() + (cover.id ? '#' + cover.id : '') + '.' + String(cover.className).slice(0, 60) : 'nothing (off-screen?)' };
 }
 
-// Describes every open menu popup and the CleanFeed items inside it.
+// Describes every open menu popup and the CleanFeed items the user sees in it.
+// Counts only shown items: items of an orphaned CleanFeed older than 1.4.0
+// (no data-cf-menu-token) are hidden by content.css and only reported in
+// `hiddenCf` / `legacyItems`.
 function readOpenPopups() {
   const shown = el => el.getAttribute('aria-hidden') !== 'true' &&
     getComputedStyle(el).display !== 'none' && el.getClientRects().length > 0;
+  const visible = el => el.getClientRects().length > 0;
   return Array.from(document.querySelectorAll('tp-yt-iron-dropdown'))
     .filter(dd => shown(dd) && dd.querySelector('yt-sheet-view-model, ytd-menu-popup-renderer'))
     .map(dd => {
-      const cf = Array.from(dd.querySelectorAll('.cleanfeed-menu-item, .cleanfeed-menu-separator'));
+      const all = Array.from(dd.querySelectorAll('.cleanfeed-menu-item, .cleanfeed-menu-separator'));
+      const cf = all.filter(visible);
+      const count = sel => cf.filter(el => el.matches(sel)).length;
       return {
-        separators: dd.querySelectorAll('.cleanfeed-menu-separator').length,
-        topicItems: dd.querySelectorAll('.cleanfeed-menu-item-topic').length,
-        blockItems: dd.querySelectorAll('.cleanfeed-menu-item:not(.cleanfeed-menu-item-topic)').length,
+        separators: count('.cleanfeed-menu-separator'),
+        topicItems: count('.cleanfeed-menu-item-topic'),
+        blockItems: count('.cleanfeed-menu-item:not(.cleanfeed-menu-item-topic)'),
         cfTotal: cf.length,
-        blockChannel: Array.from(dd.querySelectorAll('[data-cf-channel]'), el => el.getAttribute('data-cf-channel')),
+        hiddenCf: all.length - cf.length,
+        legacyItems: all.filter(el => !el.hasAttribute('data-cf-menu-token')).length,
+        blockChannel: cf.filter(el => el.hasAttribute('data-cf-channel')).map(el => el.getAttribute('data-cf-channel')),
         cfText: cf.map(el => el.textContent.trim()).filter(Boolean),
         ytItems: dd.querySelectorAll('yt-list-item-view-model, ytd-menu-service-item-renderer, ytd-menu-navigation-item-renderer').length
       };
@@ -356,5 +364,8 @@ async function main() {
 
 if (require.main === module) main();
 
-// Reused by tests/live/categories.js (the topic panel opens from this 3-dot flow)
-module.exports = { MARK_ATTR, MENU_BUTTON_RE_SOURCE, markCardMenuButton, markOpenTopicItem, clickMarked, closeMenu };
+// Reused by tests/live/categories.js (the topic panel opens from this 3-dot
+// flow) and tests/live/reinject.js (menus next to an orphaned v1.3.2)
+module.exports = {
+  MARK_ATTR, MENU_BUTTON_RE_SOURCE, SHORTS_SHELF_ITEM, markCardMenuButton, markOpenTopicItem, clickMarked, closeMenu, openAndCheck
+};

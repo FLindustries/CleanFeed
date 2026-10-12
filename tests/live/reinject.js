@@ -1,10 +1,12 @@
 'use strict';
 // Live test: CleanFeed works right after an install / update, and an orphaned
 // content script handles its dead extension context (audit findings #16, #46).
-//   node tests/live/reinject.js        (about 1 min)
+//   node tests/live/reinject.js           (about 70 s)
+//   node tests/live/reinject.js upgrade   (scenarios 3 and 4 only)
+//   node tests/live/reinject.js current   (scenarios 1 and 2 only)
 // Loads a temporary copy of the extension (scenario 2 changes it), blocks
-// "minecraft" and opens a YouTube search for it. Scenario 3 runs in a fresh
-// browser.
+// "minecraft" and opens a YouTube search for it. Scenarios 3 and 4 run in a
+// fresh browser.
 // 1. Update: chrome.runtime.reload() from the service worker, no page reload.
 //    The open tab must get a new CleanFeed instance (new marker on <html>)
 //    that filters again, with exactly one set of CleanFeed UI (one pause
@@ -19,7 +21,13 @@
 //    gets no CleanFeed items.
 // 3. Upgrade from v1.3.2 (git 851fb22), the path real users take: v1.3.2 runs
 //    the tab, this version is copied over it and reloaded. Same checks as 1
-//    (v1.3.2 sets no marker and keeps running next to the new instance).
+//    (v1.3.2 sets no marker and keeps running next to the new instance),
+//    except that the new instance shows one "reload this page" notice: only
+//    a reload ends v1.3.2.
+// 4. Still next to v1.3.2: an SPA search, a video card's 3-dot menu, then a
+//    Shorts shelf item's menu (v1.3.2 adds its items there for the earlier
+//    card; removing them froze the tab). Each menu: the tab stays responsive,
+//    at most one set of CleanFeed items is shown, nothing is removed/re-added.
 // Prints a JSON report; exit 0 only if every scenario passes.
 // Never signs in; on consent pages only "Reject all" is clicked.
 
@@ -38,6 +46,10 @@ const SEARCH_URL = 'https://www.youtube.com/results?search_query=minecraft';
 const SPA_QUERY = 'minecraft house';
 const MARKER_ATTR = 'data-cleanfeed-instance';
 const RELOAD_NOTICE = 'CleanFeed was updated — reload this page';
+// The SPA search of the v1.3.2 menu scenario (it has a Shorts shelf) and the
+// cards whose menu opens first there
+const LEGACY_MENU_QUERY = 'mkbhd';
+const LEGACY_VIDEO_CARDS = 'ytd-video-renderer, yt-lockup-view-model';
 const NO_INJECTION_LINE = '    await injectIntoOpenYouTubeTabs();';
 // The files package.sh ships: the extension as users get it.
 const EXTENSION_FILES = ['manifest.json', 'background.js', 'features.js', 'content.js', 'content-dom.js', 'storage.js',
@@ -109,16 +121,21 @@ function snapshot({ cardSelector, markerAttr, knownTitles }) {
   };
 }
 
-// CleanFeed items in the open 3-dot menu, or null when no menu is open.
+// CleanFeed items shown in the open 3-dot menu, or null when no menu is open.
+// Items of an orphaned v1.3.2 (no data-cf-menu-token) are hidden by the new
+// content.css: only counted in `hiddenCf`.
 function openMenuItems() {
   const dd = Array.from(document.querySelectorAll('tp-yt-iron-dropdown'))
     .find(d => d.getAttribute('aria-hidden') !== 'true' && d.getClientRects().length > 0 &&
       d.querySelector('yt-sheet-view-model, ytd-menu-popup-renderer'));
   if (!dd) return null;
+  const all = Array.from(dd.querySelectorAll('.cleanfeed-menu-item, .cleanfeed-menu-separator'));
+  const shown = all.filter(el => el.getClientRects().length > 0);
   return {
-    topicItems: dd.querySelectorAll('.cleanfeed-menu-item-topic').length,
-    separators: dd.querySelectorAll('.cleanfeed-menu-separator').length,
-    cfTotal: dd.querySelectorAll('.cleanfeed-menu-item, .cleanfeed-menu-separator').length
+    topicItems: shown.filter(el => el.matches('.cleanfeed-menu-item-topic')).length,
+    separators: shown.filter(el => el.matches('.cleanfeed-menu-separator')).length,
+    cfTotal: shown.length,
+    hiddenCf: all.length - shown.length
   };
 }
 
@@ -161,7 +178,10 @@ async function menuItems(page) {
 // ── Scenarios ────────────────────────────────────────────────────────────
 
 // Reloads the extension (files already in place) and checks the open tab.
-async function updateScenario(page, before, name) {
+// `fromLegacy`: the tab ran a CleanFeed older than 1.4.0, which keeps running
+// next to the new instance until the page is reloaded, so the new instance
+// shows the reload notice once.
+async function updateScenario(page, before, name, fromLegacy) {
   const result = { name, pass: false, reasons: [] };
   result.reloadMs = await h.reloadExtension();
   const started = Date.now();
@@ -179,7 +199,10 @@ async function updateScenario(page, before, name) {
   if (after.pauseSwitches !== 1) result.reasons.push(`expected 1 pause switch, found ${after.pauseSwitches}`);
   if (after.prehideStyles !== 1) result.reasons.push(`expected 1 pre-hide style, found ${after.prehideStyles}`);
   if (after.maxQuickAddPerCard > 1) result.reasons.push(`a card holds ${after.maxQuickAddPerCard} CF+ buttons`);
-  if (after.toasts.length !== 0) result.reasons.push('unexpected toast: ' + JSON.stringify(after.toasts));
+  const isReloadNotice = t => t.text.includes(RELOAD_NOTICE);
+  const notices = after.toasts.filter(isReloadNotice).length;
+  if (after.toasts.length !== notices) result.reasons.push('unexpected toast: ' + JSON.stringify(after.toasts));
+  if (notices !== (fromLegacy ? 1 : 0)) result.reasons.push(`expected ${fromLegacy ? 1 : 0} reload notice, found ${notices}`);
 
   result.menu = await menuItems(page);
   if (result.menu.error) result.reasons.push('3-dot menu: ' + result.menu.error);
@@ -217,7 +240,7 @@ async function updateScenario(page, before, name) {
   if (!spa.ok) result.reasons.push('no new result hidden after an SPA navigation to "' + SPA_QUERY + '"');
   if (spa.snap && spa.snap.marker !== after.marker) result.reasons.push('the page marker changed during SPA navigation');
   if (spa.snap && spa.snap.pauseSwitches !== 1) result.reasons.push(`after SPA navigation: ${spa.snap.pauseSwitches} pause switches`);
-  if (spa.snap && spa.snap.toasts.length !== 0) result.reasons.push('after SPA navigation: unexpected toast ' + JSON.stringify(spa.snap.toasts));
+  if (spa.snap && spa.snap.toasts.some(t => !isReloadNotice(t))) result.reasons.push('after SPA navigation: unexpected toast ' + JSON.stringify(spa.snap.toasts));
   result.pass = result.reasons.length === 0;
   return result;
 }
@@ -272,6 +295,55 @@ async function deadContextScenario(page, extensionDir) {
   return result;
 }
 
+// Runs only in a tab where v1.3.2 still runs next to the new instance. v1.3.2
+// adds its own items (no data-cf-menu-token) to every menu, for the card it
+// clicked last; a Shorts shelf item is no card for v1.3.2, so the Short's menu
+// gets v1.3.2's items for the video card whose menu was opened before. The new
+// instance must leave them alone: it used to remove them, v1.3.2 added them
+// again, and so on forever (the tab froze). content.css hides them, so each
+// menu shows at most one set of CleanFeed items, the new instance's.
+async function legacyMenuScenario(page) {
+  const result = { name: 'upgrade from v1.3.2: a video card menu, then a Shorts shelf menu (v1.3.2 still running)', pass: false, reasons: [] };
+  try {
+    // An SPA search through YouTube's own box: a page load would end v1.3.2
+    const box = page.locator('input[name="search_query"]').first();
+    await h.withTimeout(box.fill(LEGACY_MENU_QUERY, { timeout: 5000 }), 7000, 'fill search box');
+    await h.withTimeout(box.press('Enter', { timeout: 5000 }), 7000, 'submit search');
+    const deadline = Date.now() + 15000;
+    let ready = false;
+    while (!ready && Date.now() < deadline) {
+      await h.sleep(500);
+      ready = await h.evalInPage(page, ({ query, shelfSel }) => location.search.includes(query) &&
+        Array.from(document.querySelectorAll(shelfSel)).some(s => s.getClientRects().length > 0), { query: 'search_query=' + LEGACY_MENU_QUERY, shelfSel: menu.SHORTS_SHELF_ITEM });
+    }
+    if (!ready) throw new Error('no Shorts shelf after an SPA search for "' + LEGACY_MENU_QUERY + '"');
+    await h.sleep(2000);
+
+    const cardTarget = await h.evalInPage(page, menu.markCardMenuButton, {
+      cardSelector: LEGACY_VIDEO_CARDS, scope: '#primary', index: 0, reSource: menu.MENU_BUTTON_RE_SOURCE, markAttr: menu.MARK_ATTR
+    });
+    if (!cardTarget) throw new Error('no video card with a 3-dot menu button');
+    result.card = Object.assign({ target: cardTarget }, await menu.openAndCheck(page, 'one-set'));
+    result.reasons.push(...result.card.reasons.map(r => 'video card menu: ' + r));
+    if (!result.card.responsive) throw new Error('tab frozen after the video card menu');
+    await menu.closeMenu(page);
+
+    const shelfTarget = await h.evalInPage(page, menu.markCardMenuButton, {
+      cardSelector: menu.SHORTS_SHELF_ITEM, scope: '#primary', index: 0, reSource: menu.MENU_BUTTON_RE_SOURCE, markAttr: menu.MARK_ATTR
+    });
+    if (!shelfTarget) throw new Error('no Shorts shelf item with a 3-dot menu button');
+    result.shelf = Object.assign({ target: shelfTarget }, await menu.openAndCheck(page, 'optional'));
+    result.reasons.push(...result.shelf.reasons.map(r => 'Shorts shelf menu: ' + r));
+    // Did v1.3.2 add its items there (the case that froze the tab)?
+    result.v132ItemsInShelfMenu = result.shelf.popups[0] ? result.shelf.popups[0].legacyItems : null;
+    if (result.shelf.responsive) await menu.closeMenu(page);
+  } catch (err) {
+    result.reasons.push(String(err && err.message || err).split('\n')[0]);
+  }
+  result.pass = result.reasons.length === 0;
+  return result;
+}
+
 // Launches the extension from `extensionDir`, blocks "minecraft" and opens
 // the search for it. Returns { page, before, setup }.
 async function openBlockedSearch(extensionDir) {
@@ -319,7 +391,8 @@ async function upgradeRun(scenarios, setups) {
       return;
     }
     copyExtension(extensionDir);
-    scenarios.push(await updateScenario(page, before, 'upgrade from v1.3.2: the new version takes the open tab over'));
+    scenarios.push(await updateScenario(page, before, 'upgrade from v1.3.2: the new version takes the open tab over', true));
+    scenarios.push(await legacyMenuScenario(page));
   } catch (err) {
     scenarios.push({ name: 'run (upgrade from v1.3.2)', pass: false, reasons: [String(err && err.message || err).split('\n')[0]] });
   } finally {
@@ -330,11 +403,13 @@ async function upgradeRun(scenarios, setups) {
 
 async function main() {
   const startedAt = Date.now();
-  const cancelWatchdog = h.watchdog(360000);
+  const cancelWatchdog = h.watchdog(420000);
   const scenarios = [];
   const setups = {};
-  await currentVersionRun(scenarios, setups);
-  await upgradeRun(scenarios, setups);
+  // `node tests/live/reinject.js upgrade` runs only the v1.3.2 upgrade, `current` only the rest
+  const only = process.argv[2];
+  if (only !== 'upgrade') await currentVersionRun(scenarios, setups);
+  if (only !== 'current') await upgradeRun(scenarios, setups);
   cancelWatchdog();
   const report = {
     ok: scenarios.length > 0 && scenarios.every(s => s.pass),

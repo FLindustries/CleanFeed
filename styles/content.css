@@ -537,6 +537,11 @@ img.cleanfeed-cf-logo {
 .cleanfeed-menu-item:hover { background: var(--cf-bg-secondary); }
 .cleanfeed-menu-item-topic { color: var(--cf-accent); }
 .cleanfeed-menu-separator { height: 1px; background: var(--cf-border); margin: 4px 0; }
+/* Items without a token come from a CleanFeed older than 1.4.0 still running
+   in a tab open since the update (content.js leaves them alone). Hidden: they
+   would duplicate ours, and their actions can no longer be saved. */
+.cleanfeed-menu-item:not([data-cf-menu-token]),
+.cleanfeed-menu-separator:not([data-cf-menu-token]) { display: none !important; }
 
 /* --- Channel Page Block Button --- */
 .cleanfeed-channel-block-btn {
@@ -612,10 +617,15 @@ ytm-shorts-lockup-view-model-v2,
 :not(ytm-shorts-lockup-view-model-v2) > ytm-shorts-lockup-view-model {
   position: relative;
 }
+/* Bottom right of the card, but left of its rightmost 40px column: YouTube's
+   3-dot "More actions" button (where "Block channel permanently" lives) sits
+   in that column in every layout, at the card's bottom on channel grids and
+   in the watch page's side column. Not on the thumbnail: the hover preview
+   video covers it there. */
 .cleanfeed-quickadd-btn {
   position: absolute;
   bottom: 6px;
-  right: 6px;
+  right: 48px;
   width: 32px;
   height: 24px;
   padding: 0;

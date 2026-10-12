@@ -68,14 +68,14 @@
 <body>
   <div class="container">
     <h1>CleanFeed — Privacy Policy</h1>
-    <p class="subtitle">Last updated: April 15, 2026</p>
+    <p class="subtitle">Last updated: October 12, 2026</p>
 
     <div class="highlight">
       <strong>In short:</strong> CleanFeed does not collect, transmit, or sell any of your data. Everything stays on your device.
     </div>
 
     <h2>What CleanFeed Does</h2>
-    <p>CleanFeed is a browser extension that gives you control over your YouTube experience. It lets you permanently block channels, filter content by keywords and topics, manage interest boundaries, and hide Shorts.</p>
+    <p>CleanFeed is a browser extension that gives you control over your YouTube experience. It lets you permanently block channels, filter content by keywords and topics, and hide Shorts.</p>
 
     <h2>Data We Collect</h2>
     <p><strong>None.</strong> CleanFeed does not collect any personal data, browsing history, or usage analytics.</p>
@@ -85,8 +85,10 @@
     <ul>
       <li>Blocked channel names and handles</li>
       <li>Blocked keywords and topic categories</li>
-      <li>Interest boundaries and saved interests</li>
+      <li>Channels CleanFeed tagged for a blocked topic, and the videos it counted for that</li>
       <li>Extension settings (Shorts hiding, language preference, etc.)</li>
+      <li>If you turn on Strict Mode: a SHA-256 hash of its password (never the password itself)</li>
+      <li>Searches saved as interests by versions before 1.4.0, if any (kept on your device, not used by CleanFeed 1.4)</li>
       <li>A log of recently hidden videos (up to 100 entries)</li>
       <li>Basic usage counters (channels blocked, videos hidden)</li>
     </ul>
@@ -104,7 +106,8 @@
     <h2>Permissions Explained</h2>
     <ul>
       <li><strong>storage</strong> — Save your preferences locally on your device</li>
-      <li><strong>alarms</strong> — Run daily Smart Decay to auto-remove stale interests</li>
+      <li><strong>alarms</strong> — Only to remove the daily alarm that versions before 1.4.0 created. CleanFeed 1.4 creates no alarms.</li>
+      <li><strong>scripting</strong> — Right after CleanFeed is installed or updated, add its YouTube script and style sheet to the YouTube tabs that are already open, so they are filtered without a reload. Used only on youtube.com tabs.</li>
       <li><strong>Host permission (youtube.com)</strong> — Read and modify YouTube pages to block channels, filter content, and hide Shorts</li>
     </ul>
 

@@ -282,6 +282,18 @@ test('cfPageRanCleanFeed: a marker, or the traces of a version without one, mean
   assert.strictEqual(cfPageRanCleanFeed(page(el('ytd-video-renderer', { 'data-cf-quickadd-injected': 'true' }))), true, 'CF+ card');
 });
 
+test('cfPageRanLegacyCleanFeed: traces without a marker (a version before 1.4.0, which cannot stop)', () => {
+  const { cfPageRanLegacyCleanFeed } = loadContentDom();
+  const page = (...children) => fakeDocument(el('body', {}, el('ytd-app', {}, ...children)));
+  assert.strictEqual(cfPageRanLegacyCleanFeed(page(el('ytd-video-renderer', { class: 'style-scope' }))), false, 'fresh page');
+  assert.strictEqual(cfPageRanLegacyCleanFeed(fakeDocument(el('head', {}, el('style', { id: 'cleanfeed-prehide' })))), true, 'v1.3.2 pre-hide style');
+  assert.strictEqual(cfPageRanLegacyCleanFeed(page(el('ytd-video-renderer', { 'data-cf-checked': 'true' }))), true, 'v1.3.2 checked card');
+  // A 1.4.0+ instance set its marker: it stops by itself, no reload needed
+  const marked = page(el('ytd-video-renderer', { 'data-cf-checked': 'true' }));
+  marked.documentElement.attrs['data-cleanfeed-instance'] = 'old';
+  assert.strictEqual(cfPageRanLegacyCleanFeed(marked), false, 'marker');
+});
+
 // ── Locales ──────────────────────────────────────────────────────────────
 
 test('both locales carry the dead-context toast and the failure toast', () => {

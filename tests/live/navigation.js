@@ -18,6 +18,11 @@
 // first result's channel plus a blocked keyword from its title shows the
 // "subscribed channels were affected" toast once; it must not show again after
 // SPA navigation to Home and back.
+// Scenario "channel tab": on /@mkbhd/videos (no handle link in the 2025
+// header) getPageChannelId() is "@mkbhd" and CleanFeed's Block button stores
+// "@mkbhd", not "@mkbhd/videos"; the search for "mkbhd" then has a pre-hide
+// rule for /@mkbhd and hides the channel's results. A channel stored as
+// "@mkbhd/videos" (older versions) blocks the same way.
 // Each scenario runs in a fresh browser on real logged-out YouTube. Prints a
 // JSON report; exit 0 only if every scenario passes.
 // Never signs in; on consent pages only "Reject all" is clicked.
@@ -25,6 +30,7 @@
 const h = require('./harness');
 
 const SEARCH_URL = 'https://www.youtube.com/results?search_query=mkbhd';
+const CHANNEL_TAB_URL = 'https://www.youtube.com/@mkbhd/videos';
 const OTHER_CHANNEL_QUERY = 'veritasium';
 const OTHER_CHANNEL_HANDLE = '@veritasium';
 const NAV_WAIT_MS = 20000;
@@ -323,6 +329,72 @@ async function blockedChannelToHomeScenario() {
   return result;
 }
 
+// Reads CleanFeed's pre-hide rules and the search results of `handle`.
+function readHandleBlocking(handle) {
+  const style = document.getElementById('cleanfeed-prehide');
+  const rules = style && style.sheet ? Array.from(style.sheet.cssRules, r => r.cssText) : [];
+  const cards = Array.from(document.querySelectorAll('ytd-video-renderer'))
+    .filter(c => c.querySelector('a[href="/' + handle + '" i]'));
+  return {
+    ruleForHandle: rules.some(r => r.toLowerCase().includes('"/' + handle.toLowerCase() + '"')),
+    ruleForTab: rules.some(r => r.toLowerCase().includes('/' + handle.toLowerCase() + '/')),
+    cards: cards.length,
+    shownCards: cards.filter(c => getComputedStyle(c).display !== 'none').length
+  };
+}
+
+// Search results for "mkbhd": checks that the channel's results are blocked by handle.
+async function checkSearchBlocksHandle(page, step, result) {
+  await h.gotoYouTube(page, SEARCH_URL);
+  await h.waitForFilter(page, { settleMs: 3000 });
+  const seen = await h.evalInPage(page, readHandleBlocking, '@mkbhd');
+  result.steps[step] = seen;
+  if (!seen.ruleForHandle) result.reasons.push(`${step}: no pre-hide rule for /@mkbhd`);
+  if (seen.ruleForTab) result.reasons.push(`${step}: a pre-hide rule still carries the channel tab`);
+  if (seen.cards === 0) result.reasons.push(`${step}: no @mkbhd result to check`);
+  else if (seen.shownCards > 0) result.reasons.push(`${step}: ${seen.shownCards} of ${seen.cards} @mkbhd results still shown`);
+}
+
+async function channelTabBlockScenario() {
+  const result = { name: 'block from a channel tab: the handle without the tab', pass: false, steps: {}, reasons: [] };
+  try {
+    await h.launch();
+    const page = await h.newPage();
+    await h.gotoYouTube(page, CHANNEL_TAB_URL);
+    await waitForPath(page, p => p.startsWith('/@mkbhd/videos'), 'channel Videos tab');
+    const cs = await h.attachContentWorld(page);
+    await h.sleep(3000);
+    const cf = await cleanFeedView(cs);
+    result.steps.channelTab = cf;
+    if (cf.id !== '@mkbhd') result.reasons.push(`getPageChannelId() = "${cf.id}" on /@mkbhd/videos`);
+
+    // CleanFeed's own Block button (not a YouTube control)
+    result.steps.blockClick = await clickVisible(page, '.cleanfeed-channel-block-btn', 'Block button');
+    let stored = [];
+    for (let i = 0; i < 20 && stored.length === 0; i++) {
+      await h.sleep(400);
+      stored = (await h.getStorage(['blockedChannels'])).blockedChannels || [];
+    }
+    result.steps.stored = stored;
+    await h.sleep(2500); // CleanFeed leaves the blocked channel's page for Home after 1.5 s
+    if (stored.length !== 1) result.reasons.push(`expected 1 blocked channel, found ${stored.length}`);
+    else if (stored[0].id !== '@mkbhd') result.reasons.push(`the Block button stored the id "${stored[0].id}", expected "@mkbhd"`);
+    await cs.detach();
+    if (stored.length === 1) await checkSearchBlocksHandle(page, 'search after the block', result);
+
+    // An id stored with the tab by an older version still blocks by handle
+    // (under a name no result shows, so only the handle can block).
+    await h.setStorage({ blockedChannels: [{ name: 'Old name', id: '@mkbhd/videos', blockedAt: Date.now() }] });
+    await checkSearchBlocksHandle(page, 'search with "@mkbhd/videos" stored', result);
+    result.pass = result.reasons.length === 0;
+  } catch (err) {
+    result.reasons.push(String(err && err.message || err).split('\n')[0]);
+  } finally {
+    await h.close();
+  }
+  return result;
+}
+
 async function subscriptionToastScenario() {
   const result = { name: 'subscriptions toast: once per keyword + channel', pass: false, steps: {}, reasons: [] };
   try {
@@ -366,11 +438,12 @@ async function subscriptionToastScenario() {
 
 async function main() {
   const startedAt = Date.now();
-  const cancelWatchdog = h.watchdog(480000);
+  const cancelWatchdog = h.watchdog(600000);
   const scenarios = [];
   scenarios.push(await channelPagesScenario());
   scenarios.push(await blockedChannelToHomeScenario());
   scenarios.push(await subscriptionToastScenario());
+  scenarios.push(await channelTabBlockScenario());
   cancelWatchdog();
 
   const report = {
