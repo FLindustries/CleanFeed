@@ -1396,8 +1396,10 @@
     logo.textContent = 'CF';
 
     const titleStrong = document.createElement('strong');
-    const aboutText = msg('suggestedVideoAbout', [category]);
-    titleStrong.textContent = (aboutText === 'suggestedVideoAbout') ? 'This video is about "' + category + '"' : aboutText;
+    // `category` is a topic key (true_crime) or a plain blocked keyword; show the display name
+    const categoryLabel = cfCategoryLabel(category);
+    const aboutText = msg('suggestedVideoAbout', [categoryLabel]);
+    titleStrong.textContent = (aboutText === 'suggestedVideoAbout') ? 'This video is about "' + categoryLabel + '"' : aboutText;
     const titleEl = document.createElement('div');
     titleEl.appendChild(titleStrong);
 
@@ -1713,6 +1715,8 @@
 
     async function blockKeyword(keyword) {
       removeMenu();
+      // A topic key (true_crime) is shown by its display name; other keywords as typed
+      const shown = cfCategoryLabel(keyword);
       const result = await sendMsg({ action: 'addKeyword', keyword });
       if (result && result.reason === 'free_limit') {
         showToast(msg('keywordLimitToast'));
@@ -1720,14 +1724,14 @@
         return;
       }
       if (result && result.reason === 'already_exists') {
-        showToast(msg('keywordAlreadyBlocked', [keyword]) !== 'keywordAlreadyBlocked'
-          ? msg('keywordAlreadyBlocked', [keyword])
-          : '"' + keyword + '" is already blocked.');
+        showToast(msg('keywordAlreadyBlocked', [shown]) !== 'keywordAlreadyBlocked'
+          ? msg('keywordAlreadyBlocked', [shown])
+          : '"' + shown + '" is already blocked.');
         return;
       }
-      showToast(msg('keywordBlockedToast', [keyword]) !== 'keywordBlockedToast'
-        ? msg('keywordBlockedToast', [keyword])
-        : 'Blocked keyword: "' + keyword + '"');
+      showToast(msg('keywordBlockedToast', [shown]) !== 'keywordBlockedToast'
+        ? msg('keywordBlockedToast', [shown])
+        : 'Blocked keyword: "' + shown + '"');
       // Hide the full video container (walk up to find it for sidebar cards)
       let hideTarget = card;
       if (!hideTarget.matches || !hideTarget.matches(YT.VIDEO_CARDS)) {
@@ -1786,7 +1790,7 @@
 
     // Option 1: Block detected category (if found)
     if (detectedCategory) {
-      const catLabel = detectedCategory.charAt(0).toUpperCase() + detectedCategory.slice(1);
+      const catLabel = cfCategoryLabel(detectedCategory);
 
       const catOption = document.createElement('div');
       catOption.style.cssText = 'display:flex;flex-direction:column;gap:2px;';
@@ -1837,18 +1841,13 @@
     noneOpt.value = '';
     noneOpt.textContent = msg('addToCategory') !== 'addToCategory' ? msg('addToCategory') : 'Add to category:';
     catSelect.appendChild(noneOpt);
-    // Only show blocked categories as options
+    // Only show blocked categories as options (all topics, display names, from content-dom.js)
     const blockedKwSet = new Set(blockedKeywords.map(k => k.keyword.toLowerCase()));
-    const CATS = [
-      'crypto','gambling','politics','gossip','asmr','mukbang','pranks','astrology',
-      'conspiracy','nsfw','clickbait','gaming','kpop','anime','diet','hustle',
-      'horror','true_crime','reaction','unboxing'
-    ];
-    for (const c of CATS) {
-      if (blockedKwSet.has(c)) {
+    for (const c of cfCategoryList()) {
+      if (blockedKwSet.has(c.key)) {
         const opt = document.createElement('option');
-        opt.value = c;
-        opt.textContent = c.charAt(0).toUpperCase() + c.slice(1).replace('_', ' ');
+        opt.value = c.key;
+        opt.textContent = c.label;
         catSelect.appendChild(opt);
       }
     }
@@ -1867,10 +1866,10 @@
         removeMenu();
         const result = await sendMsg({ action: 'addCustomSynonym', category: selectedCat, synonym: kw });
         if (result && result.reason === 'already_exists') {
-          showToast('"' + kw + '" is already in ' + selectedCat);
+          showToast('"' + kw + '" is already in ' + cfCategoryLabel(selectedCat));
         } else {
           showToast(msg('keywordBlockedToast', [kw]) !== 'keywordBlockedToast'
-            ? msg('keywordBlockedToast', [kw]) : 'Added "' + kw + '" to ' + selectedCat);
+            ? msg('keywordBlockedToast', [kw]) : 'Added "' + kw + '" to ' + cfCategoryLabel(selectedCat));
         }
         // Hide the card and re-filter
         let hideTarget = card;
@@ -2148,7 +2147,7 @@
       banner = cfEl('div', { className: 'cleanfeed-autotag-banner' }, [
         cfLogo(),
         cfEl('span', { className: 'cleanfeed-autotag-text' }, [
-          cfEl('strong', { textContent: 'Auto-tagged: ' + autoTaggedCats.join(', ') + '.' }),
+          cfEl('strong', { textContent: 'Auto-tagged: ' + autoTaggedCats.map(cfCategoryLabel).join(', ') + '.' }),
           cfEl('span', { textContent: ' All videos from this channel are blocked because they kept matching these categories. ' })
         ]),
         cfEl('button', {
@@ -2158,7 +2157,7 @@
             for (const cat of autoTaggedCats) {
               await sendMsg({ action: 'untagChannelForCategory', category: cat, channelName });
             }
-            showToast('Untagged ' + channelName + ' from ' + autoTaggedCats.join(', '));
+            showToast('Untagged ' + channelName + ' from ' + autoTaggedCats.map(cfCategoryLabel).join(', '));
             // Refresh local state + refilter
             const newState = await sendMsg({ action: 'getFullState' });
             if (newState) applyState(newState);
@@ -2298,7 +2297,7 @@
       if (cls) {
         const label = cls.kind === 'keyword' ? 'already blocked'
                     : cls.kind === 'category' ? 'category blocked'
-                    : 'in synonyms (' + cls.category + ')';
+                    : 'in synonyms (' + cfCategoryLabel(cls.category) + ')';
         badge = cfEl('span', { className: 'cleanfeed-scan-badge', textContent: label });
       }
 
@@ -2309,7 +2308,7 @@
       for (const cat of blockedCats) {
         select.appendChild(cfEl('option', {
           value: 'syn:' + cat,
-          textContent: 'Synonym of ' + cat
+          textContent: 'Synonym of ' + cfCategoryLabel(cat)
         }));
       }
       if (alreadyBlocked) select.disabled = true;
@@ -3165,7 +3164,7 @@
     const standaloneOpt = cfEl('option', { value: '__standalone', textContent: 'Standalone keyword' });
     select.appendChild(standaloneOpt);
     for (const cat of blockedCats) {
-      select.appendChild(cfEl('option', { value: 'syn:' + cat, textContent: 'Synonym of ' + cat }));
+      select.appendChild(cfEl('option', { value: 'syn:' + cat, textContent: 'Synonym of ' + cfCategoryLabel(cat) }));
     }
     // Smart default: prefer "gaming" if blocked, else first blocked category, else standalone
     if (blockedCats.includes('gaming')) select.value = 'syn:gaming';

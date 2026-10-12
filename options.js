@@ -1,89 +1,11 @@
 // CleanFeed Options Page Script
+// Topics and their synonyms (KEYWORD_SYNONYMS, CATEGORY_META, cfCategoryList,
+// cfBuiltInTerms) come from content-dom.js, loaded before this script.
 
 let state = {};
 
-// Synonym map — duplicated from content-dom.js for the options page context.
-// Options page runs in its own context and cannot access content script globals.
-const KEYWORD_SYNONYMS = {
-  crypto: ['bitcoin', 'ethereum', 'blockchain', 'solana', 'nft', 'defi', 'binance', 'coinbase', 'altcoin', 'web3', 'dogecoin', 'shiba inu', 'trading crypto', 'criptovalute', 'criptovaluta'],
-  gambling: ['casino', 'slot', 'poker', 'betting', 'scommesse', 'roulette', 'blackjack', 'stake', 'slot machine'],
-  politics: ['politica', 'election', 'elezioni', 'trump', 'biden', 'parliament', 'parlamento', 'democrat', 'republican', 'sinistra', 'destra', 'governo', 'senato'],
-  gossip: ['drama', 'tea', 'exposed', 'scandalo', 'pettegolezzo', 'beef', 'cancelled', 'drammatico'],
-  asmr: ['whisper', 'tingles', 'soft spoken', 'mouth sounds', 'tapping asmr'],
-  mukbang: ['eating show', 'food challenge', 'eating challenge', 'mangiata'],
-  pranks: ['prank', 'scherzo', 'scherzi', 'candid camera', 'social experiment'],
-  astrology: ['astrologia', 'horoscope', 'oroscopo', 'zodiac', 'zodiaco', 'tarot', 'tarocchi', 'segno zodiacale'],
-  conspiracy: ['complotto', 'complottismo', 'flat earth', 'terra piatta', 'illuminati', 'new world order', 'qanon', 'no vax'],
-  nsfw: ['onlyfans', 'thirst trap', 'hot tub', 'bikini haul', 'try on haul', 'lingerie', 'sexy'],
-  clickbait: ['you wont believe', 'non crederai', 'gone wrong', 'shocking', 'jaw dropping', 'incredibile'],
-  gaming: ['gameplay', 'walkthrough', 'playthrough', 'lets play', 'speedrun', 'esports', 'twitch', 'fortnite', 'minecraft', 'gta', 'call of duty', 'valorant', 'league of legends', 'elden ring', 'dark souls', 'ps5', 'xbox', 'nintendo', 'videogiochi', 'videogioco', 'gamer', 'boss fight', 'dead space', 'system shock', 'resident evil', 'death stranding', 'cyberpunk', 'zelda', 'mario', 'pokemon', 'apex legends', 'overwatch', 'destiny', 'halo', 'god of war', 'final fantasy', 'remake', 'remaster', 'dlc', 'steam', 'epic games', 'playstation', 'rpg', 'mmorpg', 'game', 'games', 'giochi', 'gioco', 'sala giochi', 'video game', 'pc gaming', 'mass effect', 'bioware', 'mr beast gaming', 'roblox', 'among us', 'tetris'],
-  kpop: ['k-pop', 'bts', 'blackpink', 'stray kids', 'twice', 'aespa', 'enhypen', 'seventeen', 'k pop'],
-  anime: ['manga', 'otaku', 'one piece', 'naruto', 'demon slayer', 'jujutsu kaisen', 'attack on titan', 'dragon ball', 'shonen', 'crunchyroll'],
-  diet: ['weight loss', 'dimagrire', 'perdere peso', 'calorie deficit', 'keto', 'intermittent fasting', 'digiuno', 'dieta'],
-  hustle: ['side hustle', 'passive income', 'reddito passivo', 'dropshipping', 'affiliate marketing', 'make money online', 'guadagnare online', 'soldi facili'],
-  horror: ['creepypasta', 'scary', 'paura', 'terrore', 'jump scare', 'horror story'],
-  true_crime: ['true crime', 'murder', 'omicidio', 'serial killer', 'cold case', 'crime documentary', 'caso irrisolto', 'cronaca nera'],
-  reaction: ['reaction video', 'reacting to', 'first time watching', 'reagisco', 'la mia reazione'],
-  unboxing: ['unboxing', 'haul', 'shopping haul', 'what i bought', 'cosa ho comprato'],
-  // --- New categories added 2026-05 (Wave 1 expansion) ---
-  fitness: ['gym', 'workout', 'bodybuilding', 'push ups', 'pull ups', 'deadlift', 'squat workout', 'bench press', 'palestra', 'allenamento', 'sala pesi', 'integratori', 'whey protein', 'calisthenics', 'crossfit', 'cardio workout', 'hiit workout', 'leg day', 'chest day', 'back day', 'arm day', 'shoulder workout', 'home workout', 'full body workout', 'massa muscolare', 'ipertrofia', 'powerlifting', 'gym motivation'],
-  beauty: ['makeup tutorial', 'skincare routine', 'contouring', 'foundation routine', 'makeup palette', 'lipstick swatches', 'eyeshadow tutorial', 'trucco', 'fondotinta', 'mascara', 'rossetto', 'get ready with me', 'grwm', 'morning skincare', 'night skincare', 'sephora haul', 'ulta haul', 'beauty routine', 'pelle perfetta', 'tutorial trucco', 'beauty guru', 'eyeliner tutorial', 'blush tutorial', 'highlighter makeup', 'kbeauty', 'k-beauty'],
-  fashion: ['ootd', 'capsule wardrobe', 'thrift haul', 'fashion haul', 'outfit ideas', 'what i wore', 'try on haul fashion', 'abbigliamento', 'vestiti', 'look del giorno', 'styling tips', 'fall outfits', 'summer outfits', 'winter outfits', 'spring outfits', 'street style', 'fashion week', 'settimana della moda', 'milano fashion', 'zara haul', 'shein haul', 'fashion lookbook', 'closet tour', 'armadio capsula', 'come vestirsi', 'outfit invernali', 'outfit estivi'],
-  travel: ['travel vlog', 'expat life', 'rv life', 'road trip', 'walking tour', 'city tour', 'vlog viaggio', 'road trip italia', 'in viaggio', 'travel guide', 'travel diary', 'travel itinerary', 'backpacking', 'solo travel', 'digital nomad', 'van life', 'vita da nomadi', 'guida turistica', 'tour della città', 'cosa vedere a', 'what to do in', 'travel hacks', 'budget travel', 'luxury travel', 'island hopping', 'cruise vlog'],
-  food: ['recipe', 'cooking tutorial', 'cook with me', 'food vlog', 'ricetta', 'ricette', 'cucinare', 'in cucina', 'easy meal', 'meal prep', 'what i eat in a day', 'street food', 'food tour', 'tasty recipe', 'home cooking', 'cucina italiana', 'pasta recipe', 'pizza recipe', 'baking recipe', 'dessert recipe', 'masterchef', 'cake decorating', 'cibo di strada', 'cosa mangio', 'cooking show'],
-  cars: ['car review', 'supercar', 'lamborghini', 'ferrari', 'porsche', 'mustang', 'tesla model', 'motore v8', 'motore v12', 'automobile', 'dyno test', 'drift', 'jdm', 'top gear', 'auto sportiva', 'tuning auto', 'recensione auto', 'test drive', 'bugatti', 'mclaren', 'koenigsegg', 'rimac', 'pagani', 'aston martin', 'rolls royce', 'maserati', 'auto elettrica', 'electric car review', 'horsepower', 'cavalli motore', 'cabrio', 'coupe review'],
-  sports: ['nba', 'ufc', 'mma', 'boxe', 'boxing match', 'formula 1', 'f1 race', 'premier league', 'champions league', 'mondiali', 'sports highlights', 'partita', 'nfl highlights', 'nba highlights', 'wwe', 'wrestling match', 'serie a highlights', 'la liga', 'bundesliga', 'tennis match', 'wimbledon', 'roland garros', 'us open tennis', 'australian open', 'motogp', 'rally race', 'olimpiadi', 'pallavolo', 'pallacanestro', 'pugilato'],
-  tech: ['iphone review', 'smartphone review', 'apple event', 'samsung leak', 'gadget review', 'tech news', 'unboxing tech', 'mkbhd', 'recensione tech', 'macbook review', 'ipad review', 'galaxy s', 'pixel phone', 'tech roundup', 'best laptop', 'best smartphone', 'best gadgets', 'tech leaks', 'wwdc', 'ces 2026', 'google io', 'samsung unpacked', 'tech haul', 'edc tech', 'smartwatch review', 'airpods review', 'tech setup', 'gaming setup tour'],
-  ai_hype: ['chatgpt', 'gpt-5', 'gpt-6', 'ai will replace', 'openai', 'sam altman', 'anthropic', 'claude ai', 'gemini ai', 'ai changed everything', 'ai revolution', 'agi', 'llm', 'ai agents', 'ai prompt', 'ai art', 'midjourney', 'stable diffusion', 'dall-e', 'sora ai', 'ai video', 'prompt engineering', 'ai tools', 'best ai tools', 'ai automation', 'ai chatbot', 'this ai is insane', 'ai is taking over', 'ai news today'],
-  news: ['breaking news', 'daily news', 'news today', 'tg1', 'telegiornale', 'ultime notizie', 'cronaca', 'attualità', 'news roundup', 'evening news', 'morning news', 'live news', 'notizie di oggi', 'world news today', 'tg5', 'tg la7', 'news in 5 minutes', 'news update', 'cnn news', 'bbc news', 'fox news', 'msnbc'],
-  religion: ['sermon', 'bible study', 'pastor', 'predica', 'vangelo', 'gospel music', 'preghiera', 'cristiano', 'ramadan', 'islamic lecture', 'sunday service', 'church service', 'rosario', 'catechesi', 'meditazione cristiana', 'lettura biblica', 'studio biblico', 'fede cristiana', 'parola di dio', 'predicazione', 'omelia', 'santa messa', 'preghiera mariana', 'imam lecture'],
-  parenting: ['mom life', 'family vlog', 'parenting tips', 'dad life', 'mom vlog', 'mommy makeover', 'neonato', 'neogenitori', 'gravidanza', 'parto naturale', 'pregnancy vlog', 'birth story', 'newborn routine', 'baby haul', 'nursery tour', 'mom of three', 'dad of two', 'toddler mom', 'pannolini', 'svezzamento', 'maternity vlog', 'postpartum', 'allattamento', 'crescita bambino', 'consigli genitori', 'baby update'],
-  kids: ['nursery rhyme', 'kids song', 'baby shark', 'cocomelon', 'peppa pig', 'paw patrol', 'canzoni bambini', 'cartoni animati', 'masha e orso', 'bluey', 'pj masks', 'super wings', 'baby einstein', 'little baby bum', 'sing along kids', 'kids learning video', 'abc song', 'phonics song', 'kids cartoons', 'pocoyo', 'bing bunny', 'sigle cartoni', 'cartoni per bambini', 'filastrocche'],
-  paranormal: ['haunted house', 'ghost hunting', 'ufo sighting', 'alien encounter', 'paranormal activity', 'sciamano', 'fantasma', 'ufo italia', 'demonologia', 'esorcismo', 'caccia ai fantasmi', 'haunted location', 'cryptid', 'bigfoot', 'mothman', 'skinwalker', 'cerchi nel grano', 'crop circles', 'avvistamento ufo', 'area 51', 'roswell', 'extraterrestre', 'paranormal investigation', 'spirit box', 'ouija board', 'tavola ouija', 'poltergeist'],
-  brainrot: ['cap cut edit', 'capcut edit', 'sigma compilation', 'edit tiktok', 'brainrot', 'ai slop', 'sigma male edit', 'alpha edit', 'gigachad edit', 'mewing tutorial', 'looksmaxxing', 'looksmax', 'skibidi toilet', 'rizz compilation', 'ohio meme', 'fanum tax', 'gyatt', 'sigma rule', 'sigma mindset edit', 'phonk edit', 'velocity edit', 'anime edit tiktok', 'movie edit tiktok', 'patrick bateman edit', 'andrew tate edit', 'goggins edit']
-};
-
-const CATEGORIES = [
-  { key: 'crypto', label: 'Crypto' },
-  { key: 'gambling', label: 'Gambling' },
-  { key: 'politics', label: 'Politics' },
-  { key: 'gossip', label: 'Gossip' },
-  { key: 'asmr', label: 'ASMR' },
-  { key: 'mukbang', label: 'Mukbang' },
-  { key: 'pranks', label: 'Pranks' },
-  { key: 'astrology', label: 'Astrology' },
-  { key: 'conspiracy', label: 'Conspiracy' },
-  { key: 'nsfw', label: 'NSFW' },
-  { key: 'clickbait', label: 'Clickbait' },
-  { key: 'gaming', label: 'Gaming' },
-  { key: 'kpop', label: 'K-Pop' },
-  { key: 'anime', label: 'Anime' },
-  { key: 'diet', label: 'Diet' },
-  { key: 'hustle', label: 'Hustle' },
-  { key: 'horror', label: 'Horror' },
-  { key: 'true_crime', label: 'True Crime' },
-  { key: 'reaction', label: 'Reaction' },
-  { key: 'unboxing', label: 'Unboxing' },
-  // Added in v1.3.0 (Wave 1 expansion) — must mirror CATEGORIES above
-  { key: 'fitness', label: 'Fitness' },
-  { key: 'beauty', label: 'Beauty' },
-  { key: 'fashion', label: 'Fashion' },
-  { key: 'travel', label: 'Travel' },
-  { key: 'food', label: 'Food' },
-  { key: 'cars', label: 'Cars' },
-  { key: 'sports', label: 'Sports' },
-  { key: 'tech', label: 'Tech' },
-  { key: 'ai_hype', label: 'AI Hype' },
-  { key: 'news', label: 'News' },
-  { key: 'religion', label: 'Religion' },
-  { key: 'parenting', label: 'Parenting' },
-  { key: 'kids', label: 'Kids' },
-  { key: 'paranormal', label: 'Paranormal' },
-  { key: 'brainrot', label: 'Brainrot' },
-];
-
 // Preset profiles — curated bundles of category keys for one-click setup.
-// Each preset's `keys` must exist in CATEGORIES/KEYWORD_SYNONYMS above.
+// Each preset's `keys` must exist in CATEGORY_META / KEYWORD_SYNONYMS (content-dom.js).
 const PRESETS = [
   { id: 'focus_mode', emoji: '\u{1F3AF}', label: 'Focus mode', desc: 'No gaming, drama, reactions, brainrot', keys: ['gaming', 'gossip', 'reaction', 'brainrot'] },
   { id: 'detox_hustle', emoji: '\u{1F4B0}', label: 'Hustle detox', desc: 'No "get rich quick" content', keys: ['hustle', 'crypto', 'gambling', 'ai_hype'] },
@@ -324,7 +246,7 @@ function renderStats() {
     row.className = 'stats-bar-row';
     const labelEl = document.createElement('span');
     labelEl.className = 'stats-bar-label';
-    labelEl.textContent = item.cat;
+    labelEl.textContent = cfCategoryLabel(item.cat);
     const barWrap = document.createElement('div');
     barWrap.className = 'stats-bar-wrap';
     const bar = document.createElement('div');
@@ -788,10 +710,11 @@ function renderCategories() {
   const totalKeywords = (state.blockedKeywords || []).length;
   const atFreeLimit = !state.isPro && totalKeywords >= 3;
 
-  for (const cat of CATEGORIES) {
+  for (const cat of cfCategoryList()) {
     const isActive = blockedKwSet.has(cat.key);
     const isLocked = !isActive && atFreeLimit;
-    const synonyms = KEYWORD_SYNONYMS[cat.key] || [];
+    // Exactly the terms blocking uses (content-dom.js): the topic key, then its synonyms
+    const builtInTerms = cfBuiltInTerms(cat.key);
 
     const item = document.createElement('div');
     item.className = 'category-item';
@@ -815,7 +738,7 @@ function renderCategories() {
 
     const countEl = document.createElement('span');
     countEl.className = 'category-count';
-    countEl.textContent = synonyms.length + ' terms';
+    countEl.textContent = builtInTerms.length + ' terms';
     left.appendChild(countEl);
 
     header.appendChild(left);
@@ -874,13 +797,13 @@ function renderCategories() {
     const synonymList = document.createElement('div');
     synonymList.className = 'synonym-list';
 
-    // Built-in synonyms (category key + synonyms) — all toggleable
-    const allBuiltIn = [cat.key, ...synonyms];
-    for (const syn of allBuiltIn) {
+    // Built-in terms (category key + synonyms) — all toggleable. The category's
+    // own term is shown by its display name, never as a raw key like ai_hype.
+    for (const syn of builtInTerms) {
       const isDisabled = disabledSet.has(syn.toLowerCase());
       const chip = document.createElement('button');
       chip.className = 'synonym-chip' + (isDisabled ? ' disabled' : ' active');
-      chip.textContent = syn;
+      chip.textContent = syn === cat.key ? cat.label : syn;
       chip.title = isDisabled ? 'Click to re-enable' : 'Click to disable';
       chip.addEventListener('click', async () => {
         await chrome.runtime.sendMessage({ action: 'toggleSynonym', synonym: syn });
@@ -1022,7 +945,7 @@ function renderKeywords() {
   container.textContent = '';
 
   const keywords = state.blockedKeywords || [];
-  const categoryKeys = new Set(CATEGORIES.map(c => c.key));
+  const categoryKeys = new Set(cfCategoryList().map(c => c.key));
   const customKeywords = keywords.filter(kw => !categoryKeys.has(kw.keyword.toLowerCase()));
 
   if (customKeywords.length === 0) {
@@ -1130,7 +1053,7 @@ function renderHidden() {
     const reason = document.createElement('span');
     reason.className = 'list-item-reason';
     if (vid.reason.startsWith('keyword:')) {
-      reason.textContent = msg('keywordReason', [vid.reason.split(':')[1]]);
+      reason.textContent = msg('keywordReason', [cfCategoryLabel(vid.reason.split(':')[1])]);
     } else if (vid.reason.startsWith('channel:')) {
       reason.textContent = msg('channelReason', [vid.reason.split(':')[1]]);
     } else {

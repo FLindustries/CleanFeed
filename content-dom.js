@@ -1,6 +1,10 @@
 // CleanFeed DOM Helpers
 // YouTube enforces Trusted Types CSP — never use innerHTML.
 // All DOM creation goes through these helpers.
+//
+// popup.html and options.html load this file too (topics and synonyms live
+// here), and they have no YouTube page around them: top level must only
+// declare, never touch the document or window.location.
 
 function cfEl(tag, attrs, children) {
   const el = document.createElement(tag);
@@ -604,6 +608,73 @@ const KEYWORD_SYNONYMS = {
     'patrick bateman edit', 'andrew tate edit', 'goggins edit']
 };
 
+// --- Topic display names and order ---
+// The one place that names and orders the topics. The popup grid, the Options
+// list and the topic menu on YouTube all read it, so a new topic is added here
+// and in KEYWORD_SYNONYMS and nowhere else (tests/unit/categories.test.js fails
+// if the two drift apart). The key is what is stored and matched; never show it
+// to the user, show the label (cfCategoryLabel).
+
+const CATEGORY_META = {
+  crypto: { label: 'Crypto' },
+  gambling: { label: 'Gambling' },
+  politics: { label: 'Politics' },
+  gossip: { label: 'Gossip' },
+  asmr: { label: 'ASMR' },
+  mukbang: { label: 'Mukbang' },
+  pranks: { label: 'Pranks' },
+  astrology: { label: 'Astrology' },
+  conspiracy: { label: 'Conspiracy' },
+  nsfw: { label: 'NSFW' },
+  clickbait: { label: 'Clickbait' },
+  gaming: { label: 'Gaming' },
+  kpop: { label: 'K-Pop' },
+  anime: { label: 'Anime' },
+  diet: { label: 'Diet' },
+  hustle: { label: 'Hustle' },
+  horror: { label: 'Horror' },
+  true_crime: { label: 'True Crime' },
+  reaction: { label: 'Reaction' },
+  unboxing: { label: 'Unboxing' },
+  fitness: { label: 'Fitness' },
+  beauty: { label: 'Beauty' },
+  fashion: { label: 'Fashion' },
+  travel: { label: 'Travel' },
+  food: { label: 'Food' },
+  cars: { label: 'Cars' },
+  sports: { label: 'Sports' },
+  tech: { label: 'Tech' },
+  ai_hype: { label: 'AI Hype' },
+  news: { label: 'News' },
+  religion: { label: 'Religion' },
+  parenting: { label: 'Parenting' },
+  kids: { label: 'Kids' },
+  paranormal: { label: 'Paranormal' },
+  brainrot: { label: 'Brainrot' }
+};
+
+// Every topic as { key, label }, in display order.
+function cfCategoryList() {
+  return Object.keys(CATEGORY_META).map(key => ({ key, label: CATEGORY_META[key].label }));
+}
+
+// What to show the user for a topic key ("true_crime" -> "True Crime"). Anything
+// that is not a topic (a plain blocked keyword) comes back unchanged.
+function cfCategoryLabel(key) {
+  const text = key == null ? '' : String(key);
+  const lower = text.toLowerCase();
+  return Object.prototype.hasOwnProperty.call(CATEGORY_META, lower) ? CATEGORY_META[lower].label : text;
+}
+
+// The built-in terms blocking a topic uses: the topic key first, then its
+// synonyms, each once. Empty when `key` is not a topic. Options lists exactly
+// these as chips; getExpandedKeywords adds the user's switches on top.
+function cfBuiltInTerms(key) {
+  const lower = String(key == null ? '' : key).toLowerCase();
+  if (!Object.prototype.hasOwnProperty.call(KEYWORD_SYNONYMS, lower)) return [];
+  return [...new Set([lower, ...KEYWORD_SYNONYMS[lower]])];
+}
+
 // disabledSynonymsSet and customSynonymsMap are set by the content script
 // from applyState(). They filter/extend the synonym expansion.
 let _cfDisabledSynonyms = new Set();
@@ -621,8 +692,7 @@ function getExpandedKeywords(keyword) {
   const lower = keyword.toLowerCase();
   if (!Object.prototype.hasOwnProperty.call(KEYWORD_SYNONYMS, lower)) return [lower];
   // Start with built-in synonyms (deduplicated), filter out disabled ones
-  const expanded = [...new Set([lower, ...KEYWORD_SYNONYMS[lower]])]
-    .filter(s => !_cfDisabledSynonyms.has(s));
+  const expanded = cfBuiltInTerms(lower).filter(s => !_cfDisabledSynonyms.has(s));
   // Add custom synonyms for this category
   const customs = Array.isArray(_cfCustomSynonyms[lower]) ? _cfCustomSynonyms[lower] : [];
   for (const cs of customs) {

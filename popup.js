@@ -268,28 +268,8 @@ function renderBlocked() {
   catHeader.textContent = cfMsg('categoryBlocking') || 'Block by Topic';
   container.appendChild(catHeader);
 
-  const CATEGORIES = [
-    { key: 'crypto', label: 'Crypto' },
-    { key: 'gambling', label: 'Gambling' },
-    { key: 'politics', label: 'Politics' },
-    { key: 'gossip', label: 'Gossip' },
-    { key: 'asmr', label: 'ASMR' },
-    { key: 'mukbang', label: 'Mukbang' },
-    { key: 'pranks', label: 'Pranks' },
-    { key: 'astrology', label: 'Astrology' },
-    { key: 'conspiracy', label: 'Conspiracy' },
-    { key: 'nsfw', label: 'NSFW' },
-    { key: 'clickbait', label: 'Clickbait' },
-    { key: 'gaming', label: 'Gaming' },
-    { key: 'kpop', label: 'K-Pop' },
-    { key: 'anime', label: 'Anime' },
-    { key: 'diet', label: 'Diet' },
-    { key: 'hustle', label: 'Hustle' },
-    { key: 'horror', label: 'Horror' },
-    { key: 'true_crime', label: 'True Crime' },
-    { key: 'reaction', label: 'Reaction' },
-    { key: 'unboxing', label: 'Unboxing' },
-  ];
+  // All topics, in display order (shared list from content-dom.js)
+  const CATEGORIES = cfCategoryList();
 
   const blockedKwSet = new Set((state.blockedKeywords || []).map(k => k.keyword.toLowerCase()));
   const totalKeywords = (state.blockedKeywords || []).length;
@@ -455,7 +435,7 @@ function renderHidden() {
     const reason = document.createElement('span');
     reason.className = 'list-item-reason';
     if (vid.reason.startsWith('keyword:')) {
-      reason.textContent = cfMsg('keywordReason', [vid.reason.split(':')[1]]);
+      reason.textContent = cfMsg('keywordReason', [cfCategoryLabel(vid.reason.split(':')[1])]);
     } else if (vid.reason.startsWith('channel:')) {
       reason.textContent = cfMsg('channelReason', [vid.reason.split(':')[1]]);
     } else {

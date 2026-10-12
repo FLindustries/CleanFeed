@@ -354,4 +354,7 @@ async function main() {
   process.exit(report.ok ? 0 : 1);
 }
 
-main();
+if (require.main === module) main();
+
+// Reused by tests/live/categories.js (the topic panel opens from this 3-dot flow)
+module.exports = { MARK_ATTR, MENU_BUTTON_RE_SOURCE, markCardMenuButton, markOpenTopicItem, clickMarked, closeMenu };
