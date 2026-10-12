@@ -72,6 +72,155 @@ chrome.runtime.onStartup.addListener(() => {
   });
 });
 
+// --- Strict Mode lock ---
+// While strict mode is on, a request that weakens filtering needs the right
+// `strictPassword`, otherwise it is refused with { error: 'strict_locked' }.
+// Adding blocks is never gated.
+
+// Settings that hide content; turning one off weakens filtering.
+const STRICT_HIDE_SETTINGS = ['hideShorts', 'hideComments', 'hideSubsRelevant'];
+
+// Actions isWeakeningAction can call weakening (the guard skips the others).
+const STRICT_GUARDED_ACTIONS = new Set([
+  'removeBlockedChannel', 'clearAllBlockedChannels', 'removeKeyword',
+  'untagChannelForCategory', 'clearCategoryData', 'replaceCategoryTags',
+  'toggleSynonym', 'removeCustomSynonym', 'whitelistChannel', 'updateSetting',
+  'importAllData', 'setStrictPassword', 'disableStrictMode'
+]);
+
+// Storage the weakening checks compare a request against.
+const STRICT_STATE_KEYS = [
+  'settings', 'blockedChannels', 'blockedKeywords', 'customSynonyms', 'disabledSynonyms',
+  'whitelistedChannels', 'categoryTags', 'categoryTagExclusions'
+];
+
+// Same meaning as the content script: hideSubsRelevant is on unless false.
+function isHideSettingOn(key, value) {
+  return key === 'hideSubsRelevant' ? value !== false : !!value;
+}
+
+function strictLower(value) {
+  return typeof value === 'string' ? value.toLowerCase() : '';
+}
+
+// Keys of { group: [item, ...] } as "group\nitem" (lowercase).
+function strictPairs(map) {
+  const out = new Set();
+  if (!map || typeof map !== 'object') return out;
+  for (const [group, items] of Object.entries(map)) {
+    if (!Array.isArray(items)) continue;
+    for (const item of items) out.add(group.toLowerCase() + '\n' + strictLower(item));
+  }
+  return out;
+}
+
+// True when some value of `before` is not in `after` (both Sets).
+function strictLosesAny(before, after) {
+  for (const value of before) if (!after.has(value)) return true;
+  return false;
+}
+
+function strictSetOf(list, keyOf) {
+  return new Set((Array.isArray(list) ? list : []).map(item => keyOf(item || {})).filter(Boolean));
+}
+
+// True when importing `data` (an exported backup, applied like importAllData
+// does) would weaken filtering compared with `current`: disable strict mode
+// or change its password, turn a hide setting off, remove a blocked channel,
+// keyword, custom synonym or auto-tag, or add a disabled synonym, whitelisted
+// channel or untag exclusion.
+function importWeakens(data, current) {
+  if (!data || typeof data !== 'object') return false;
+  if (data.settings && typeof data.settings === 'object') {
+    const cur = current.settings || {};
+    const next = { ...cur, ...data.settings };
+    if (cur.strictModeEnabled &&
+        (!next.strictModeEnabled || next.strictModePasswordHash !== cur.strictModePasswordHash)) return true;
+    for (const key of STRICT_HIDE_SETTINGS) {
+      if (isHideSettingOn(key, cur[key]) && !isHideSettingOn(key, next[key])) return true;
+    }
+  }
+  if (Array.isArray(data.blockedChannels)) {
+    if (strictLosesAny(strictSetOf(current.blockedChannels, ch => strictLower(ch.name)),
+                       strictSetOf(data.blockedChannels, ch => strictLower(ch.name)))) return true;
+    if (strictLosesAny(strictSetOf(current.blockedChannels, ch => strictLower(ch.id)),
+                       strictSetOf(data.blockedChannels, ch => strictLower(ch.id)))) return true;
+  }
+  if (Array.isArray(data.blockedKeywords) &&
+      strictLosesAny(strictSetOf(current.blockedKeywords, k => strictLower(k.keyword)),
+                     strictSetOf(data.blockedKeywords, k => strictLower(k.keyword)))) return true;
+  if (data.customSynonyms && typeof data.customSynonyms === 'object' &&
+      strictLosesAny(strictPairs(current.customSynonyms), strictPairs(data.customSynonyms))) return true;
+  if (Array.isArray(data.disabledSynonyms) &&
+      strictLosesAny(new Set(data.disabledSynonyms.map(strictLower)),
+                     new Set((current.disabledSynonyms || []).map(strictLower)))) return true;
+  if (Array.isArray(data.whitelistedChannels)) {
+    const keyOf = ch => strictLower(ch.name) + '\n' + strictLower(ch.exemptFrom);
+    if (strictLosesAny(strictSetOf(data.whitelistedChannels, keyOf),
+                       strictSetOf(current.whitelistedChannels, keyOf))) return true;
+  }
+  if (data.categoryTags && typeof data.categoryTags === 'object' &&
+      strictLosesAny(strictPairs(current.categoryTags), strictPairs(data.categoryTags))) return true;
+  if (data.categoryTagExclusions && typeof data.categoryTagExclusions === 'object' && !Array.isArray(data.categoryTagExclusions) &&
+      strictLosesAny(strictPairs(data.categoryTagExclusions), strictPairs(current.categoryTagExclusions))) return true;
+  return false;
+}
+
+// True when `request` would weaken filtering. `current`: the stored state it
+// changes ({ settings, blockedChannels, blockedKeywords, customSynonyms,
+// disabledSynonyms, whitelistedChannels, categoryTags, categoryTagExclusions }).
+// Pure: whether strict mode is on is checked by strictModeRefusal.
+function isWeakeningAction(request, current) {
+  const state = current || {};
+  switch (request && request.action) {
+    case 'removeBlockedChannel':
+    case 'clearAllBlockedChannels':
+    case 'removeKeyword':
+    case 'untagChannelForCategory':
+    case 'clearCategoryData':
+    case 'removeCustomSynonym':
+    case 'whitelistChannel':
+    case 'disableStrictMode':
+    case 'setStrictPassword': // while strict mode is on: replaces its password
+      return true;
+    case 'toggleSynonym': {
+      // Storage.toggleSynonym re-enables a disabled synonym, else disables it
+      const disabled = Array.isArray(state.disabledSynonyms) ? state.disabledSynonyms : [];
+      return typeof request.synonym !== 'string' || !disabled.includes(request.synonym.toLowerCase());
+    }
+    case 'replaceCategoryTags':
+      return strictLosesAny(strictPairs(state.categoryTags), strictPairs(request.tags || {}));
+    case 'updateSetting':
+      return STRICT_HIDE_SETTINGS.includes(request.key) && !isHideSettingOn(request.key, request.value);
+    case 'importAllData':
+      return importWeakens(request.data, state);
+    default:
+      return false;
+  }
+}
+
+// Same check as verifyStrictPassword: with strict mode off or no password
+// set, any password matches.
+async function strictPasswordMatches(settings, password) {
+  if (!settings.strictModeEnabled) return true;
+  if (!settings.strictModePasswordHash) return true;
+  const hash = await Storage.hashPassword(password || '');
+  return hash === settings.strictModePasswordHash;
+}
+
+// Returns { error: 'strict_locked' } when strict mode is on and `request`
+// weakens filtering without the right `strictPassword`, else null.
+// disableStrictMode checks its own `password` in its handler.
+async function strictModeRefusal(request) {
+  if (!request || !STRICT_GUARDED_ACTIONS.has(request.action) || request.action === 'disableStrictMode') return null;
+  const current = await chrome.storage.local.get(STRICT_STATE_KEYS);
+  const settings = current.settings || Storage.DEFAULTS.settings;
+  if (!settings.strictModeEnabled) return null;
+  if (!isWeakeningAction(request, current)) return null;
+  if (await strictPasswordMatches(settings, request.strictPassword)) return null;
+  return { error: 'strict_locked' };
+}
+
 // --- Message Handling ---
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -86,6 +235,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
 async function handleMessage(request) {
   const isPro = await checkProStatus();
+
+  const refusal = await strictModeRefusal(request);
+  if (refusal) return refusal;
 
   switch (request.action) {
     // --- Channel Blocking ---
@@ -366,6 +518,10 @@ async function handleMessage(request) {
     }
 
     case 'updateSetting': {
+      // Strict mode changes only through setStrictPassword / disableStrictMode
+      if (request.key === 'strictModeEnabled' || request.key === 'strictModePasswordHash') {
+        return { success: false, reason: 'not_allowed' };
+      }
       await Storage.updateSetting(request.key, request.value);
       return { success: true };
     }
@@ -452,15 +608,16 @@ async function handleMessage(request) {
     // --- Strict Mode ---
     case 'verifyStrictPassword': {
       const settings = await Storage.getSettings();
-      if (!settings.strictModeEnabled) return { valid: true };
-      if (!settings.strictModePasswordHash) return { valid: true };
-      const hash = await Storage.hashPassword(request.password || '');
-      return { valid: hash === settings.strictModePasswordHash };
+      return { valid: await strictPasswordMatches(settings, request.password) };
     }
 
+    // Turns strict mode on with this password. Enabling it is Pro-only; while
+    // it is on, this replaces the password (strictModeRefusal asks for the
+    // current one) and needs no Pro, nor does disabling it.
     case 'setStrictPassword': {
-      const hash = await Storage.hashPassword(request.password || '');
       const settings = await Storage.getSettings();
+      if (!settings.strictModeEnabled && !isPro) return { error: 'pro_only' };
+      const hash = await Storage.hashPassword(request.password || '');
       settings.strictModePasswordHash = hash;
       settings.strictModeEnabled = true;
       await chrome.storage.local.set({ settings });

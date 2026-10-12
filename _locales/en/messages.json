@@ -9,6 +9,8 @@
   "strictWrongPassword": { "message": "Wrong password." },
   "strictModeEnabledMsg": { "message": "Strict mode enabled. You'll need this password to disable it." },
   "strictRequiresPassword": { "message": "Strict mode is enabled. Enter password to continue:" },
+  "strictLockedTitle": { "message": "Locked by Strict Mode" },
+  "strictLockedToast": { "message": "Locked by Strict Mode. To change this, turn off Strict Mode in CleanFeed Settings." },
   "extensionName": { "message": "CleanFeed - YouTube That Respects You" },
   "extensionDescription": { "message": "Permanent channel blocking, keyword and topic filtering, and Shorts removal. Take control of YouTube's algorithm." },
   "controls": { "message": "Controls" },

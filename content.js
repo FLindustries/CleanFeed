@@ -130,6 +130,7 @@
 
   // Build a slider toggle switch (dark-mode style). The "on" state means the
   // labelled feature is ACTIVE (e.g. CleanFeed ON, Channel hidden ON).
+  // opts.locked: locked by Strict Mode (dimmed; a click only explains why).
   function cfSwitch(opts) {
     const wrap = document.createElement('button');
     wrap.type = 'button';
@@ -137,6 +138,10 @@
     if (opts.id) wrap.id = opts.id;
     if (opts.title) wrap.title = opts.title;
     if (opts.extraClass) wrap.className += ' ' + opts.extraClass;
+    if (opts.locked) {
+      wrap.className += ' cleanfeed-strict-locked';
+      for (const [name, value] of Object.entries(strictLockAttrs())) wrap.setAttribute(name, value);
+    }
 
     const label = cfEl('span', { className: 'cf-switch-label', textContent: opts.label });
     const thumb = cfEl('span', { className: 'cf-switch-thumb' });
@@ -144,14 +149,34 @@
 
     wrap.appendChild(label);
     wrap.appendChild(track);
-    if (typeof opts.onToggle === 'function') {
+    const onToggle = opts.locked ? showStrictLockedToast : opts.onToggle;
+    if (typeof onToggle === 'function') {
       wrap.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
-        opts.onToggle();
+        onToggle();
       });
     }
     return wrap;
+  }
+
+  // ── Strict Mode ───────────────────────────────────────────────────────
+  // While strict mode is on, the on-page controls that weaken filtering
+  // (pause, peek, untag, the "More relevant" toggle, the subscription
+  // exception) are locked. No password is ever asked inside a YouTube page:
+  // the user turns strict mode off in CleanFeed's settings instead.
+
+  function isStrictLocked() {
+    return !!currentSettings.strictModeEnabled;
+  }
+
+  // Attributes of a control locked by Strict Mode: the reason as its tooltip.
+  function strictLockAttrs() {
+    return { title: msg('strictLockedTitle'), 'aria-disabled': 'true' };
+  }
+
+  function showStrictLockedToast() {
+    showToast(msg('strictLockedToast'));
   }
 
   // ── Page-scope skip rules ─────────────────────────────────────────────
@@ -364,6 +389,14 @@
     logDebugState(state);
     currentSettings = state.settings || {};
     isPro = !!state.isPro;
+    // Strict mode ends a page pause or channel peek the user started before it was on
+    if (isStrictLocked()) {
+      if (isPagePaused) {
+        isPagePaused = false;
+        document.body.classList.remove('cleanfeed-paused');
+      }
+      peekedChannels.clear();
+    }
     blockedKeywords = state.blockedKeywords || [];
     whitelistedChannels = state.whitelistedChannels || [];
 
@@ -558,6 +591,7 @@
     const hitsOnly = keys.length > 0 && keys.every(k => k === 'categoryHits' || k === 'categoryHitVideos');
     if (hitsOnly) return;
 
+    const wasStrictLocked = isStrictLocked();
     const state = await sendMsg({ action: 'getFullState' });
     applyState(state);
 
@@ -576,6 +610,13 @@
     if (blockedMsg) blockedMsg.remove();
 
     filterPage();
+
+    // Strict mode turned on or off: lock or unlock the on-page controls now
+    if (isStrictLocked() !== wasStrictLocked) {
+      injectPauseToggle();
+      injectChannelPageButton();
+      injectSubscriptionsToggle();
+    }
   }
 
   // ── CSS Pre-Hiding for Blocked Channels ────────────────────────────
@@ -946,12 +987,14 @@
           content.classList.add('cleanfeed-hidden');
           // Show a message that this channel is blocked, with a peek button
           if (!document.getElementById('cf-channel-blocked-msg')) {
+            const peekLocked = isStrictLocked();
             const peekBtn = cfEl('button', {
-              className: 'cleanfeed-btn cleanfeed-btn-primary',
+              className: 'cleanfeed-btn cleanfeed-btn-primary' + (peekLocked ? ' cleanfeed-strict-locked' : ''),
               style: 'margin-left:12px;',
               textContent: msg('showChannelJustNow') !== 'showChannelJustNow'
                 ? msg('showChannelJustNow') : 'Show just now',
-              onClick: () => {
+              ...(peekLocked ? strictLockAttrs() : {}),
+              onClick: peekLocked ? showStrictLockedToast : () => {
                 setChannelPeek(pageChannel, pageHandle, true);
               }
             });
@@ -2099,6 +2142,7 @@
       on: filteringOn,
       title: peekTitle,
       extraClass: 'cleanfeed-channel-peek-btn',
+      locked: filteringOn && isStrictLocked(), // peeking weakens; ending a peek never does
       onToggle: () => setChannelPeek(channelName, channelId, filteringOn)
     });
     peekBtn.setAttribute('data-cf-channel', channelName);
@@ -2148,6 +2192,7 @@
 
     let banner = null;
     if (autoTaggedCats.length > 0 && !isWatch) {
+      const untagLocked = isStrictLocked();
       banner = cfEl('div', { className: 'cleanfeed-autotag-banner' }, [
         cfLogo(),
         cfEl('span', { className: 'cleanfeed-autotag-text' }, [
@@ -2155,11 +2200,13 @@
           cfEl('span', { textContent: ' All videos from this channel are blocked because they kept matching these categories. ' })
         ]),
         cfEl('button', {
-          className: 'cleanfeed-btn cleanfeed-btn-primary',
+          className: 'cleanfeed-btn cleanfeed-btn-primary' + (untagLocked ? ' cleanfeed-strict-locked' : ''),
           textContent: 'Untag channel',
-          onClick: async () => {
+          ...(untagLocked ? strictLockAttrs() : {}),
+          onClick: untagLocked ? showStrictLockedToast : async () => {
             for (const cat of autoTaggedCats) {
-              await sendMsg({ action: 'untagChannelForCategory', category: cat, channelName });
+              const res = await sendMsg({ action: 'untagChannelForCategory', category: cat, channelName });
+              if (res.error === 'strict_locked') { showStrictLockedToast(); return; }
             }
             showToast('Untagged ' + channelName + ' from ' + autoTaggedCats.map(cfCategoryLabel).join(', '));
             // Refresh local state + refilter
@@ -2628,6 +2675,7 @@
       label,
       on: isOn,
       title,
+      locked: isOn && isStrictLocked(), // pausing weakens; resuming never does
       onToggle: () => setPagePaused(isOn) // if currently ON, pause it; if OFF, resume
     });
     // Append as LAST child of #center → appears right after the mic icon,
@@ -2713,9 +2761,11 @@
       label,
       on: hidden,
       title,
+      locked: hidden && isStrictLocked(), // showing the shelf weakens; hiding it never does
       onToggle: async () => {
         const newVal = !hidden;
-        await sendMsg({ action: 'updateSetting', key: 'hideSubsRelevant', value: newVal });
+        const res = await sendMsg({ action: 'updateSetting', key: 'hideSubsRelevant', value: newVal });
+        if (res.error === 'strict_locked') { showStrictLockedToast(); return; }
         currentSettings.hideSubsRelevant = newVal;
         applyRelevantSectionVisibility();
         injectSubscriptionsToggle();
@@ -2989,18 +3039,23 @@
     ]);
 
     const chips = cfEl('div', { className: 'cleanfeed-toast-chips' });
+    const chipsLocked = isStrictLocked();
     for (const ch of affectedChannels) {
       const chip = cfEl('button', {
-        className: 'cleanfeed-chip',
+        className: 'cleanfeed-chip' + (chipsLocked ? ' cleanfeed-strict-locked' : ''),
         textContent: ch.name,
+        ...(chipsLocked ? strictLockAttrs() : {}),
         onClick: () => {
-          if (isPro) {
+          if (isStrictLocked()) {
+            showStrictLockedToast();
+          } else if (isPro) {
             sendMsg({
               action: 'whitelistChannel',
               name: ch.name,
               id: ch.id,
               exemptFrom: keyword,
-            }).then(() => {
+            }).then((res) => {
+              if (res.error === 'strict_locked') { showStrictLockedToast(); return; }
               chip.remove();
               // Re-filter to un-hide
               document.querySelectorAll('[data-cf-checked]').forEach((el) => {

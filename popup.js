@@ -66,6 +66,26 @@ async function loadState() {
   state = await chrome.runtime.sendMessage({ action: 'getFullState' });
 }
 
+// The strict-mode password the background accepted in this popup, kept in
+// memory only while the popup is open (never stored), so it's asked once.
+let strictPassword = '';
+
+// Sends a message to the background. While strict mode is on, a request that
+// weakens filtering comes back { error: 'strict_locked' }: ask for the
+// password, retry with it, and remember it once accepted. Returns the
+// background's response (still strict_locked if cancelled or wrong).
+async function sendWithStrict(request) {
+  let res = await chrome.runtime.sendMessage(strictPassword ? { ...request, strictPassword } : request);
+  if (res?.error !== 'strict_locked') return res;
+  strictPassword = '';
+  const pwd = prompt(cfMsg('strictRequiresPassword'));
+  if (!pwd) return res;
+  res = await chrome.runtime.sendMessage({ ...request, strictPassword: pwd });
+  if (res?.error === 'strict_locked') alert(cfMsg('strictWrongPassword'));
+  else strictPassword = pwd;
+  return res;
+}
+
 // Send refilter message directly to the active YouTube tab so it
 // un-hides / re-hides content immediately (backup for storage.onChanged).
 function notifyContentScript() {
@@ -116,9 +136,10 @@ function renderControls() {
   // Toggle: Hide Shorts (Free)
   container.appendChild(createToggle('hideShorts', 'hideShortsDesc', state.settings?.hideShorts, false, async (val) => {
     settingsUpdateInFlight = true;
-    await chrome.runtime.sendMessage({ action: 'updateSetting', key: 'hideShorts', value: val });
-    state.settings.hideShorts = val;
+    const res = await sendWithStrict({ action: 'updateSetting', key: 'hideShorts', value: val });
     settingsUpdateInFlight = false;
+    if (res?.error) { renderControls(); return; } // refused: show the real state again
+    state.settings.hideShorts = val;
   }));
 
   // Toggle: Interest Boundaries (Pro) — only while the feature exists (features.js)
@@ -249,7 +270,8 @@ function renderBlocked() {
       removeBtn.className = 'list-item-remove';
       removeBtn.textContent = '\u00d7';
       removeBtn.addEventListener('click', async () => {
-        await chrome.runtime.sendMessage({ action: 'removeBlockedChannel', index: i });
+        const res = await sendWithStrict({ action: 'removeBlockedChannel', index: i });
+        if (res?.error) return;
         notifyContentScript();
         await loadState();
         renderAll();
@@ -265,7 +287,8 @@ function renderBlocked() {
     clearBtn.textContent = cfMsg('clearAll');
     clearBtn.addEventListener('click', async () => {
       if (confirm(cfMsg('clearAllConfirm'))) {
-        await chrome.runtime.sendMessage({ action: 'clearAllBlockedChannels' });
+        const res = await sendWithStrict({ action: 'clearAllBlockedChannels' });
+        if (res?.error) return;
         notifyContentScript();
         await loadState();
         renderAll();
@@ -303,7 +326,8 @@ function renderBlocked() {
         const keywords = state.blockedKeywords || [];
         const idx = keywords.findIndex(k => k.keyword.toLowerCase() === cat.key);
         if (idx >= 0) {
-          await chrome.runtime.sendMessage({ action: 'removeKeyword', index: idx });
+          const res = await sendWithStrict({ action: 'removeKeyword', index: idx });
+          if (res?.error) return;
         }
       } else {
         // Add
@@ -399,7 +423,8 @@ function renderBlocked() {
       removeBtn.className = 'list-item-remove';
       removeBtn.textContent = '\u00d7';
       removeBtn.addEventListener('click', async () => {
-        await chrome.runtime.sendMessage({ action: 'removeKeyword', index: i });
+        const res = await sendWithStrict({ action: 'removeKeyword', index: i });
+        if (res?.error) return;
         notifyContentScript();
         await loadState();
         renderAll();

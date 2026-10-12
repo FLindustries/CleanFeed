@@ -287,13 +287,15 @@ function renderSettings() {
   container.textContent = '';
 
   container.appendChild(createToggle('hideShorts', 'hideShortsDesc', state.settings?.hideShorts, false, async (val) => {
-    await chrome.runtime.sendMessage({ action: 'updateSetting', key: 'hideShorts', value: val });
+    const res = await sendWithStrict({ action: 'updateSetting', key: 'hideShorts', value: val });
+    if (res?.error) { renderSettings(); return; } // refused: show the real state again
     state.settings.hideShorts = val;
     notifyContentScript();
   }));
 
   container.appendChild(createToggle('hideComments', 'hideCommentsDesc', state.settings?.hideComments, false, async (val) => {
-    await chrome.runtime.sendMessage({ action: 'updateSetting', key: 'hideComments', value: val });
+    const res = await sendWithStrict({ action: 'updateSetting', key: 'hideComments', value: val });
+    if (res?.error) { renderSettings(); return; }
     state.settings.hideComments = val;
     notifyContentScript();
   }));
@@ -529,7 +531,10 @@ function renderSettings() {
   const strictTitle = document.createElement('span');
   strictTitle.textContent = msg('strictMode') !== 'strictMode' ? msg('strictMode') : 'Strict mode';
   strictTitleRow.appendChild(strictTitle);
-  if (!state.isPro) {
+  // Enabling strict mode is Pro; turning it off never is (also after Pro lapsed)
+  const strictOn = !!state.settings?.strictModeEnabled;
+  const strictProLocked = !state.isPro && !strictOn;
+  if (strictProLocked) {
     const pro = document.createElement('span');
     pro.className = 'pro-badge-inline';
     pro.textContent = 'PRO';
@@ -545,13 +550,13 @@ function renderSettings() {
   strictItem.appendChild(strictInfo);
 
   const strictToggle = document.createElement('div');
-  strictToggle.className = 'toggle-switch' + (state.settings?.strictModeEnabled ? ' active' : '') + (!state.isPro ? ' locked' : '');
+  strictToggle.className = 'toggle-switch' + (strictOn ? ' active' : '') + (strictProLocked ? ' locked' : '');
   const strictKnob = document.createElement('div');
   strictKnob.className = 'toggle-knob';
   strictToggle.appendChild(strictKnob);
   strictToggle.addEventListener('click', async () => {
-    if (!state.isPro) { chrome.runtime.sendMessage({ action: 'openPaymentPage' }); return; }
     const currentlyEnabled = strictToggle.classList.contains('active');
+    if (!currentlyEnabled && !state.isPro) { chrome.runtime.sendMessage({ action: 'openPaymentPage' }); return; }
     if (!currentlyEnabled) {
       const pwd = prompt(msg('strictSetPassword') !== 'strictSetPassword'
         ? msg('strictSetPassword')
@@ -572,6 +577,10 @@ function renderSettings() {
         return;
       }
       const res = await chrome.runtime.sendMessage({ action: 'setStrictPassword', password: pwd });
+      if (res?.error === 'pro_only') {
+        chrome.runtime.sendMessage({ action: 'openPaymentPage' });
+        return;
+      }
       if (res?.success) {
         strictToggle.classList.add('active');
         state.settings.strictModeEnabled = true;
@@ -600,20 +609,31 @@ function renderSettings() {
   container.appendChild(strictItem);
 }
 
-async function requireStrictPasswordIfEnabled() {
-  if (!state.settings?.strictModeEnabled) return true;
+// The strict-mode password the background accepted on this page, kept in
+// memory only for the page's lifetime (never stored), so it's asked once.
+let strictPassword = '';
+
+// Sends a message to the background. While strict mode is on, a request that
+// weakens filtering comes back { error: 'strict_locked' }: ask for the
+// password, retry with it, and remember it once accepted. Returns the
+// background's response (still strict_locked if cancelled or wrong).
+async function sendWithStrict(request) {
+  let res = await chrome.runtime.sendMessage(strictPassword ? { ...request, strictPassword } : request);
+  if (res?.error !== 'strict_locked') return res;
+  strictPassword = '';
   const pwd = prompt(msg('strictRequiresPassword') !== 'strictRequiresPassword'
     ? msg('strictRequiresPassword')
     : 'Strict mode is enabled. Enter password to continue:');
-  if (!pwd) return false;
-  const res = await chrome.runtime.sendMessage({ action: 'verifyStrictPassword', password: pwd });
-  if (!res?.valid) {
+  if (!pwd) return res;
+  res = await chrome.runtime.sendMessage({ ...request, strictPassword: pwd });
+  if (res?.error === 'strict_locked') {
     alert(msg('strictWrongPassword') !== 'strictWrongPassword'
       ? msg('strictWrongPassword')
       : 'Wrong password.');
-    return false;
+  } else {
+    strictPassword = pwd;
   }
-  return true;
+  return res;
 }
 
 function createToggle(titleKey, descKey, isActive, isLocked, onChange) {
@@ -705,8 +725,8 @@ function renderChannels() {
     removeBtn.className = 'list-item-remove';
     removeBtn.textContent = '\u00d7';
     removeBtn.addEventListener('click', async () => {
-      if (!(await requireStrictPasswordIfEnabled())) return;
-      await chrome.runtime.sendMessage({ action: 'removeBlockedChannel', index: i });
+      const res = await sendWithStrict({ action: 'removeBlockedChannel', index: i });
+      if (res?.error) return;
       notifyContentScript();
       await loadState();
       renderChannels();
@@ -787,11 +807,11 @@ function renderCategories() {
         return;
       }
       if (isActive) {
-        if (!(await requireStrictPasswordIfEnabled())) return;
         const keywords = state.blockedKeywords || [];
         const idx = keywords.findIndex(k => k.keyword.toLowerCase() === cat.key);
         if (idx >= 0) {
-          await chrome.runtime.sendMessage({ action: 'removeKeyword', index: idx });
+          const res = await sendWithStrict({ action: 'removeKeyword', index: idx });
+          if (res?.error) return;
         }
       } else {
         const result = await chrome.runtime.sendMessage({ action: 'addKeyword', keyword: cat.key });
@@ -827,7 +847,8 @@ function renderCategories() {
       chip.textContent = syn === cat.key ? cat.label : syn;
       chip.title = isDisabled ? 'Click to re-enable' : 'Click to disable';
       chip.addEventListener('click', async () => {
-        await chrome.runtime.sendMessage({ action: 'toggleSynonym', synonym: syn });
+        const res = await sendWithStrict({ action: 'toggleSynonym', synonym: syn });
+        if (res?.error) return;
         notifyContentScript();
         await loadState();
         renderCategories();
@@ -846,7 +867,8 @@ function renderCategories() {
       removeBtn.textContent = '\u00d7';
       removeBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
-        await chrome.runtime.sendMessage({ action: 'removeCustomSynonym', category: cat.key, synonym: cs });
+        const res = await sendWithStrict({ action: 'removeCustomSynonym', category: cat.key, synonym: cs });
+        if (res?.error) return;
         notifyContentScript();
         await loadState();
         renderCategories();
@@ -947,7 +969,8 @@ function renderAutoTaggedChannels(categoryKey, isActive) {
     untagBtn.textContent = msg('untagChannelBtn');
     untagBtn.addEventListener('click', async () => {
       untagBtn.disabled = true;
-      await chrome.runtime.sendMessage({ action: 'untagChannelForCategory', category: categoryKey, channelName: ch });
+      const res = await sendWithStrict({ action: 'untagChannelForCategory', category: categoryKey, channelName: ch });
+      if (res?.error) { untagBtn.disabled = false; return; }
       notifyContentScript();
       await loadState();
       renderCategories();
@@ -991,8 +1014,8 @@ function renderKeywords() {
     removeBtn.className = 'list-item-remove';
     removeBtn.textContent = '\u00d7';
     removeBtn.addEventListener('click', async () => {
-      if (!(await requireStrictPasswordIfEnabled())) return;
-      await chrome.runtime.sendMessage({ action: 'removeKeyword', index: i });
+      const res = await sendWithStrict({ action: 'removeKeyword', index: i });
+      if (res?.error) return;
       notifyContentScript();
       await loadState();
       renderKeywords();
@@ -1212,9 +1235,9 @@ function setupButtons() {
   // rest of setupButtons never runs.
   const clearChannelsBtn = document.getElementById('clearChannelsBtn');
   if (clearChannelsBtn) clearChannelsBtn.addEventListener('click', async () => {
-    if (!(await requireStrictPasswordIfEnabled())) return;
     if (confirm(msg('clearAllConfirm'))) {
-      await chrome.runtime.sendMessage({ action: 'clearAllBlockedChannels' });
+      const res = await sendWithStrict({ action: 'clearAllBlockedChannels' });
+      if (res?.error) return;
       notifyContentScript();
       await loadState();
       renderChannels();
@@ -1268,11 +1291,12 @@ function setupButtons() {
       try {
         const text = await file.text();
         const data = JSON.parse(text);
-        const res = await chrome.runtime.sendMessage({ action: 'importAllData', data });
+        // A backup that would weaken filtering needs the strict-mode password
+        const res = await sendWithStrict({ action: 'importAllData', data });
         if (res?.success) {
           alert(msg('importSuccess') !== 'importSuccess' ? msg('importSuccess') : 'Import successful. Page will reload.');
           window.location.reload();
-        } else {
+        } else if (res?.error !== 'strict_locked') { // strict_locked: password cancelled or wrong (already told)
           alert(msg('importError') !== 'importError' ? msg('importError') : 'Import failed: invalid file format.');
         }
       } catch (e) {

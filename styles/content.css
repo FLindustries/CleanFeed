@@ -748,3 +748,11 @@ ytm-shorts-lockup-view-model-v2:hover .cleanfeed-quickadd-btn,
   padding: 12px 18px;
   border-top: 1px solid var(--cf-border);
 }
+
+/* --- Controls locked by Strict Mode (tooltip says why; a click shows a toast) --- */
+.cf-switch.cleanfeed-strict-locked,
+.cleanfeed-btn.cleanfeed-strict-locked,
+.cleanfeed-chip.cleanfeed-strict-locked {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
