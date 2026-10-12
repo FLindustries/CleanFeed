@@ -403,7 +403,12 @@ async function rejectConsentIfShown(page) {
   const onConsentHost = /(^|\.)consent\.(youtube|google)\.com$/.test(new URL(page.url()).hostname);
   // After the first pass the choice is remembered in a cookie, so only peek.
   const waitMs = onConsentHost ? 10000 : (state.consentSettled ? 800 : 4000);
-  const button = page.getByRole('button', { name: REJECT_ALL_RE }).first();
+  // Accessible name OR visible text: YouTube's in-page consent bump gives its
+  // "Reject all" button a long aria-label ("Reject the use of cookies ..."),
+  // so only the button's text says "Reject all".
+  const button = page.getByRole('button', { name: REJECT_ALL_RE })
+    .or(page.locator('button').filter({ hasText: REJECT_ALL_RE }))
+    .first();
   let shown = false;
   try {
     await withTimeout(button.waitFor({ state: 'visible', timeout: waitMs }), waitMs + 2000, 'consent button');
@@ -413,11 +418,17 @@ async function rejectConsentIfShown(page) {
   if (!shown) return false;
   await withTimeout(button.click({ timeout: 5000 }), 8000, 'click Reject all');
   if (onConsentHost) {
-    await withTimeout(
-      page.waitForURL(u => !/(^|\.)consent\./.test(u.hostname) && /youtube\.com$/.test(u.hostname), { timeout: 20000 }),
-      22000,
-      'redirect after consent'
-    );
+    try {
+      await withTimeout(
+        page.waitForURL(u => !/(^|\.)consent\./.test(u.hostname) && /youtube\.com$/.test(u.hostname), { timeout: 20000 }),
+        22000,
+        'redirect after consent'
+      );
+    } catch (e) {
+      // The redirect can be aborted (net::ERR_ABORTED) by a follow-up
+      // navigation; gotoYouTube() navigates again if we are not on YouTube.
+      await sleep(1000);
+    }
   } else {
     await sleep(500);
   }
@@ -462,6 +473,8 @@ async function close() {
   state.context = null;
   state.sw = null;
   state.extensionId = null;
+  // The next launch uses a fresh profile, so YouTube asks for consent again.
+  state.consentSettled = false;
   if (!context) return;
   try {
     await withTimeout(context.close(), CLOSE_TIMEOUT_MS, 'context.close');
@@ -488,6 +501,7 @@ module.exports = {
   setStorage,
   getStorage,
   gotoYouTube,
+  rejectConsentIfShown,
   waitForFilter,
   close,
   isHeadless: () => state.headless
