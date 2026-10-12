@@ -114,6 +114,7 @@
   "scanNoCandidates": { "message": "Nessuna keyword ricorrente trovata. Prova a scrollare per caricare più video, poi riprova." },
   "scanAddSelected": { "message": "Aggiungi selezionate" },
   "scanNothingSelected": { "message": "Seleziona almeno una keyword" },
+  "scanNothingAdded": { "message": "Nessuna keyword aggiunta" },
   "cancel": { "message": "Annulla" },
   "hideComments": { "message": "Nascondi commenti YouTube" },
   "hideCommentsDesc": { "message": "Nasconde l'intera sezione commenti su ogni pagina video" },

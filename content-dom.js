@@ -623,3 +623,340 @@ function getExpandedKeywords(keyword) {
   }
   return expanded;
 }
+
+// --- Keyword suggestions (CF+ quick-add popover and Channel Scan) ---
+//
+// Pure helpers that turn video titles into the phrases offered for blocking.
+// A suggested phrase is always a piece of the title it came from, so
+// matchesKeyword() finds it there:
+//   - a word keeps its inner characters ("baldur's", "spider-man"); only the
+//     punctuation at its two edges is trimmed
+//   - an elision ("dell'anno", "l'ultimo", "qu'il") splits at the apostrophe
+//   - phrases of several words are cut from the title itself, so the spacing and
+//     punctuation between the words are the title's own
+//   - letters and digits of every script count as word characters
+
+// Words that carry no meaning of their own, so they are never offered as a
+// keyword (and never sit inside a suggested phrase).
+const STOP_WORDS = new Set([
+  // English common words
+  'the','a','an','is','are','was','were','in','on','at','to','for','of','and','or',
+  'but','not','this','that','with','from','by','how','what','why','when','who','my',
+  'your','you','he','she','it','we','they','me','him','her','us','them','do','does',
+  'did','will','would','can','could','should','may','might','has','have','had','no',
+  'yes','all','just','about','been','being','get','got','new','old','first','last',
+  'very','most','some','any','one','two','its','than','then','so','if','up','out',
+  'into','more','come','like','best','full','video','videos','official','music',
+  'ago','here','there','also','make','made','too','such','only','same','still','even',
+  'much','many','few','our','their','these','those','part','watch','watching','look',
+  'looking','seen','find','found','using','vs',
+  // Italian articles, prepositions, common particles
+  'il','la','le','lo','un','una','uno','di','da','del','della','dello','dei','degli',
+  'delle','dal','dalla','dallo','dai','dagli','dalle','al','alla','allo','ai','agli',
+  'alle','sul','sulla','sullo','sui','sugli','sulle','che','per','con','non','nel',
+  'nella','nello','nei','negli','nelle','su','tra','fra',
+  // Italian common pronouns / determiners
+  'questo','questa','questi','queste','quello','quella','quei','quelle','quel',
+  'mio','mia','miei','mie','tuo','tua','tuoi','tue','suo','sua','suoi','sue',
+  'nostro','nostra','nostri','nostre','vostro','vostra','vostri','vostre',
+  'loro','lui','lei','noi','voi','essi','esse',
+  // Italian common verbs / adverbs
+  'sono','sei','siamo','siete','era','erano','essere','stato','stata','stati','state',
+  'avere','avuto','avuta','avuti','avute','ho','hai','abbiamo','avete','hanno',
+  'fare','fatto','fatti','fatta','fatte','dire','detto','dare','dato','vedere','visto',
+  'come','cosa','tutto','tutti','tutta','tutte','anche','solo','dopo','prima','ancora',
+  'ogni','poi','molto','poco','tanto','troppo','abbastanza','bene','male','meglio',
+  'forse','magari','davvero','proprio','sempre','mai','già','ormai','adesso','oggi',
+  'ieri','domani','quasi','finalmente','altro','altri','altra','altre','meno','vero',
+  'vera','veri','vere','quindi','perché','perche',
+  // Italian filler words from clickbait titles
+  'sembra','sembrano','sembrava','sembrerebbe','arriva','arrivano','arrivato',
+  'annuncia','annunciato','annunciata','conferma','confermato','presentato','presenta',
+  'minuti','minuto','secondi','secondo','ora','ore','giorni','giorno','anni','anno',
+  'nuovo','nuova','nuovi','nuove','grande','grandi','piccolo','piccola','vecchio',
+  'vecchia','primo','prima','ultimo','ultima','ufficiale','ufficialmente','pure',
+  'subito','ancora','direttamente','semplicemente','assolutamente',
+  'wow','top','solo','così','cosi','contro','dentro','sopra','sotto','dietro',
+  // Generic noisy words that aren't useful blockers
+  'black','white','red','blue','green','grey','gray',
+  'first','second','third','final','main','full','best','worst','great','good','bad',
+  // Common YouTube title fillers
+  'ep','episode','episodio','parte','part','reaction','reactions',
+  // Italian additions from real-world scan results (EveryEye etc.)
+  'più','piu','italiano','italiana','italiani','italiane',
+  'gratis','film','ecco','modalità','modalita','modo','modi',
+  'momento','momenti','perfetto','perfetta','perfetti','perfette',
+  'prova','provato','provata','provati','provate','prove',
+  'cose','cosa','gen','pro','serie','stagione',
+  'spettacolare','spettacolari','fantastico','fantastica','fantastici','fantastiche',
+  'incredibile','incredibili','assurdo','assurda','assurdi','assurde',
+  'vogliamo','voglio','vuoi','vuole','vogliono','vorrei','vorrebbe',
+  'alto','alta','alti','alte','basso','bassa','bassi','basse',
+  'bello','bella','belli','belle','bellissimo','bellissima','bellissimi','bellissime',
+  'brutto','brutta','brutti','brutte','bruttissimo','bruttissimi',
+  'grosso','grossa','grossi','grosse','grande','grandi','piccolo','piccola',
+  'animo','aniimo','energia','corso','tempo','tempi','momenti',
+  'migliore','migliori','peggiore','peggiori','semplice','semplici',
+  'complicato','complicata','difficile','difficili','facile','facili',
+  'pure','direttamente','semplicemente','assolutamente','sicuramente',
+  'arriva','arrivano','arrivato','arrivata','arrivati','arrivate',
+  'parla','parlano','parlato','parlata','dice','dicono','detto','dico',
+  'volta','volte','spesso','raramente','recente','recenti',
+  'totalmente','completamente','letteralmente',
+  // More Italian fillers from real scans (round 2)
+  'pazzesco','pazzesca','pazzeschi','pazzesche',
+  'roba','livello','livelli','stile','stili',
+  'animazione','animazioni','animato','animata',
+  'battono','battere','battuto','battuta',
+  'capolavoro','capolavori','meraviglia','meraviglie',
+  'adoriamo','adoro','adora','adorano','adorato',
+  'grafica','grafiche','grafico','visivo','visiva',
+  'enorme','enormi','immenso','immensa','immensi','immense',
+  'rivelato','rivelata','rivelati','rivelate','svela','svelato','svelata',
+  'oltre','aggiunge','aggiunto','aggiunta','novità','novita',
+  'arriva','arrivata','arrivati','arrivate'
+]);
+
+// Articles and prepositions that elide before a vowel: Italian "l'ultimo",
+// "dell'anno", "un'altra", "quest'anno", French "l'été", "qu'il", "d'amour".
+// A word whose part before the apostrophe is not listed here ("Baldur's",
+// "O'Brien", "don't", "rock'n'roll") is never split.
+const CF_ELISION_PREFIXES = new Set([
+  // Italian
+  'l', 'un', 'c', 'd', 'm', 's', 't', 'v', 'n', 'dell', 'all', 'nell', 'sull', 'dall',
+  'coll', 'quest', 'quell', 'sant', 'bell', 'buon', 'com', 'dov', 'cos', 'senz', 'tutt',
+  'anch', 'quant',
+  // French
+  'j', 'qu', 'jusqu', 'lorsqu', 'puisqu', 'quoiqu'
+]);
+
+// A prefix of letters, an apostrophe (plain, typographic or modifier letter) and at
+// least two more letters or digits ("l'a" and "dell's" stay whole).
+const CF_ELISION_RE = /^(\p{L}+)['\u2018\u2019\u02BC](?=[\p{L}\p{N}]{2})/u;
+
+// From the first to the last word character of a whitespace-free run: this is
+// the run with its edge punctuation trimmed ('"Spider-Man":' -> 'Spider-Man').
+// Same word characters as matchesKeyword, so a trimmed token always starts and
+// ends where matchesKeyword accepts a word edge.
+const CF_TOKEN_CORE_RE = new RegExp('[' + CF_WORD_CHARS + '](?:.*[' + CF_WORD_CHARS + '])?', 'u');
+
+// Splits a title into word tokens, in order:
+//   text       the word as written in the title (edge punctuation trimmed)
+//   key        text in match form: lowercase, NFC, plain apostrophe
+//   start/end  where text sits in the title (title.slice(start, end) === text)
+//   elision    true for the elided article of "dell'anno" ("dell'"); never a keyword
+//   gapBefore  true when a word made only of punctuation ("-", "|", "...") was
+//              dropped between the previous token and this one: no phrase may
+//              reach across it
+function cfTokenizeTitle(title) {
+  const tokens = [];
+  if (!title) return tokens;
+  const text = String(title);
+  const runs = /\S+/gu;
+  let gap = false;
+  let run;
+  while ((run = runs.exec(text)) !== null) {
+    const core = CF_TOKEN_CORE_RE.exec(run[0]);
+    if (!core || !/[\p{L}\p{N}]/u.test(core[0])) { gap = true; continue; }
+    let start = run.index + core.index;
+    let rest = core[0];
+    for (;;) {
+      const elided = CF_ELISION_RE.exec(rest);
+      if (!elided || !CF_ELISION_PREFIXES.has(elided[1].toLowerCase())) break;
+      tokens.push({
+        text: elided[0], key: cfNormalizeForMatch(elided[0]), start, end: start + elided[0].length,
+        elision: true, gapBefore: gap
+      });
+      gap = false;
+      start += elided[0].length;
+      rest = rest.slice(elided[0].length);
+    }
+    tokens.push({
+      text: rest, key: cfNormalizeForMatch(rest), start, end: start + rest.length,
+      elision: false, gapBefore: gap
+    });
+    gap = false;
+  }
+  return tokens;
+}
+
+// A token's letters and digits only ("it's" -> "its", "spider-man" -> "spiderman"):
+// the form that is compared with STOP_WORDS and measured for length.
+function cfStopKey(key) {
+  return key.replace(/[^\p{L}\p{M}\p{N}]/gu, '');
+}
+
+// Quick-add: every title word becomes a chip, but a stop word or a single
+// character is shown disabled. Numbers are allowed ("GTA 5") unless they are
+// a single digit.
+function cfIsQuickAddStop(token) {
+  if (token.elision) return true;
+  const word = cfStopKey(token.key);
+  return word.length < 2 || STOP_WORDS.has(word);
+}
+
+// Channel Scan: stricter, a candidate needs 3+ characters and is not a number.
+function cfIsUsefulScanToken(token) {
+  if (token.elision) return false;
+  const word = cfStopKey(token.key);
+  return word.length >= 3 && !STOP_WORDS.has(word) && !/^\d+$/.test(word);
+}
+
+// Phrase of the tokens first..last: cut from the title, so it matches the title.
+function cfPhraseOfTokens(text, tokens, first, last) {
+  return text.slice(tokens[first].start, tokens[last].end);
+}
+
+// The chips of the CF+ quick-add popover for one title, in display order: every
+// word, then pairs, then triples of neighbouring words.
+//   kind    'word' | 'bigram' | 'trigram'
+//   text    what the chip shows (the title's own words)
+//   phrase  what gets saved if the chip is picked (match form of text)
+//   stop    true for a chip that is shown disabled (words only; a pair or triple
+//           never contains a stop word)
+// The elided article of "dell'anno" has no chip. Words made only of punctuation
+// have none either, and no pair or triple reaches across them.
+function cfQuickAddChips(title) {
+  const text = title ? String(title) : '';
+  const tokens = cfTokenizeTitle(text);
+  const stop = tokens.map(cfIsQuickAddStop);
+  const chips = [];
+  tokens.forEach((token, i) => {
+    if (token.elision) return;
+    chips.push({ kind: 'word', text: token.text, phrase: token.key, stop: stop[i] });
+  });
+  for (let size = 2; size <= 3; size++) {
+    for (let i = 0; i + size <= tokens.length; i++) {
+      let joined = true;
+      for (let j = 0; j < size && joined; j++) {
+        joined = !stop[i + j] && (j === 0 || !tokens[i + j].gapBefore);
+      }
+      if (!joined) continue;
+      const shown = cfPhraseOfTokens(text, tokens, i, i + size - 1);
+      chips.push({
+        kind: size === 2 ? 'bigram' : 'trigram',
+        text: shown, phrase: cfNormalizeForMatch(shown), stop: false
+      });
+    }
+  }
+  return chips;
+}
+
+// What the quick-add popover saves for the chips the user picked (a Set or array
+// of chip phrases): picked words that sit next to each other in the title merge
+// into one phrase cut from the title ("star", "wars" -> "star wars"), every other
+// pick is kept as it is. Safety net: a phrase that matchesKeyword does not find in
+// the title would never block anything, so it is returned in `skipped` instead of
+// `phrases`.
+function cfResolveQuickAddSelection(title, selected) {
+  const text = title ? String(title) : '';
+  const chosen = new Set(selected || []);
+  const tokens = cfTokenizeTitle(text);
+  const wanted = [];
+  const mergedWords = new Set();
+  let run = [];
+  const closeRun = () => {
+    if (run.length > 1) {
+      wanted.push(cfNormalizeForMatch(text.slice(run[0].start, run[run.length - 1].end)));
+      for (const token of run) mergedWords.add(token.key);
+    }
+    run = [];
+  };
+  for (const token of tokens) {
+    const picked = !token.elision && chosen.has(token.key);
+    if (picked && run.length > 0 && !token.gapBefore) {
+      run.push(token);
+    } else {
+      closeRun();
+      if (picked) run = [token];
+    }
+  }
+  closeRun();
+  for (const phrase of chosen) {
+    if (!mergedWords.has(phrase)) wanted.push(phrase);
+  }
+
+  const phrases = [];
+  const skipped = [];
+  const seen = new Set();
+  for (const phrase of wanted) {
+    if (!phrase || seen.has(phrase)) continue;
+    seen.add(phrase);
+    (matchesKeyword(text, phrase) ? phrases : skipped).push(phrase);
+  }
+  return { phrases, skipped };
+}
+
+// Safety net for Channel Scan: a phrase is worth saving only if it matches at
+// least one of the titles that were analysed.
+function cfPhraseMatchesAnyTitle(titles, phrase) {
+  if (!titles || !phrase) return false;
+  for (const title of titles) {
+    if (matchesKeyword(title, phrase)) return true;
+  }
+  return false;
+}
+
+// Does `words` hold `run` as consecutive words?
+function cfHasWordRun(words, run) {
+  for (let i = 0; i + run.length <= words.length; i++) {
+    if (run.every((word, j) => words[i + j] === word)) return true;
+  }
+  return false;
+}
+
+// Channel Scan: the most frequent words and phrases (2 or 3 neighbouring words)
+// of a set of titles, as { phrase, count, type } sorted by count. Only phrases
+// that occur in 2+ titles; a title counts a phrase once. Stop words, tokens under
+// 3 characters and numbers are never used, and a phrase never reaches across one
+// of them or across a dropped separator. A phrase of neighbouring words is cut
+// from the title. A longer phrase hides the words it is made of when it has the
+// same count.
+function cfExtractKeywords(titles) {
+  if (!titles || titles.length === 0) return [];
+
+  const MIN_FREQ = 2;
+  const counts = [null, new Map(), new Map(), new Map()]; // index = words per phrase
+
+  for (const title of titles) {
+    const text = title ? String(title) : '';
+    const tokens = cfTokenizeTitle(text);
+    const useful = tokens.map(cfIsUsefulScanToken);
+    for (let size = 1; size <= 3; size++) {
+      const seen = new Set();
+      for (let i = 0; i + size <= tokens.length; i++) {
+        let joined = true;
+        for (let j = 0; j < size && joined; j++) {
+          joined = useful[i + j] && (j === 0 || !tokens[i + j].gapBefore);
+        }
+        if (!joined) continue;
+        const phrase = size === 1
+          ? tokens[i].key
+          : cfNormalizeForMatch(cfPhraseOfTokens(text, tokens, i, i + size - 1));
+        if (seen.has(phrase)) continue;
+        seen.add(phrase);
+        const entry = counts[size].get(phrase);
+        if (entry) entry.count++;
+        else counts[size].set(phrase, { count: 1, words: tokens.slice(i, i + size).map(t => t.key) });
+      }
+    }
+  }
+
+  const TYPES = [null, 'unigram', 'bigram', 'trigram'];
+  const candidates = [];
+  // Longest first, so a shorter phrase can be checked against the longer ones
+  for (let size = 3; size >= 1; size--) {
+    for (const [phrase, entry] of counts[size]) {
+      if (entry.count < MIN_FREQ) continue;
+      const hidden = candidates.some(c =>
+        c.words.length > size && c.count === entry.count && cfHasWordRun(c.words, entry.words));
+      if (!hidden) candidates.push({ phrase, count: entry.count, type: TYPES[size], words: entry.words });
+    }
+  }
+
+  candidates.sort((a, b) => b.count - a.count || a.phrase.localeCompare(b.phrase));
+  // Top 40 — wide enough to catch specific franchises (Ratchet & Clank,
+  // Saros, Pragmata, etc.) that appear 2-3 times, tight enough that the
+  // user doesn't drown in noise.
+  return candidates.slice(0, 40).map(c => ({ phrase: c.phrase, count: c.count, type: c.type }));
+}

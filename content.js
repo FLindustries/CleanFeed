@@ -1148,85 +1148,6 @@
     return null;
   }
 
-  const STOP_WORDS = new Set([
-    // English common words
-    'the','a','an','is','are','was','were','in','on','at','to','for','of','and','or',
-    'but','not','this','that','with','from','by','how','what','why','when','who','my',
-    'your','you','he','she','it','we','they','me','him','her','us','them','do','does',
-    'did','will','would','can','could','should','may','might','has','have','had','no',
-    'yes','all','just','about','been','being','get','got','new','old','first','last',
-    'very','most','some','any','one','two','its','than','then','so','if','up','out',
-    'into','more','come','like','best','full','video','videos','official','music',
-    'ago','here','there','also','make','made','too','such','only','same','still','even',
-    'much','many','few','our','their','these','those','part','watch','watching','look',
-    'looking','seen','find','found','using','vs',
-    // Italian articles, prepositions, common particles
-    'il','la','le','lo','un','una','uno','di','da','del','della','dello','dei','degli',
-    'delle','dal','dalla','dallo','dai','dagli','dalle','al','alla','allo','ai','agli',
-    'alle','sul','sulla','sullo','sui','sugli','sulle','che','per','con','non','nel',
-    'nella','nello','nei','negli','nelle','su','tra','fra',
-    // Italian common pronouns / determiners
-    'questo','questa','questi','queste','quello','quella','quei','quelle','quel',
-    'mio','mia','miei','mie','tuo','tua','tuoi','tue','suo','sua','suoi','sue',
-    'nostro','nostra','nostri','nostre','vostro','vostra','vostri','vostre',
-    'loro','lui','lei','noi','voi','essi','esse',
-    // Italian common verbs / adverbs
-    'sono','sei','siamo','siete','era','erano','essere','stato','stata','stati','state',
-    'avere','avuto','avuta','avuti','avute','ho','hai','abbiamo','avete','hanno',
-    'fare','fatto','fatti','fatta','fatte','dire','detto','dare','dato','vedere','visto',
-    'come','cosa','tutto','tutti','tutta','tutte','anche','solo','dopo','prima','ancora',
-    'ogni','poi','molto','poco','tanto','troppo','abbastanza','bene','male','meglio',
-    'forse','magari','davvero','proprio','sempre','mai','già','ormai','adesso','oggi',
-    'ieri','domani','quasi','finalmente','altro','altri','altra','altre','meno','vero',
-    'vera','veri','vere','quindi','perché','perche',
-    // Italian filler words from clickbait titles
-    'sembra','sembrano','sembrava','sembrerebbe','arriva','arrivano','arrivato',
-    'annuncia','annunciato','annunciata','conferma','confermato','presentato','presenta',
-    'minuti','minuto','secondi','secondo','ora','ore','giorni','giorno','anni','anno',
-    'nuovo','nuova','nuovi','nuove','grande','grandi','piccolo','piccola','vecchio',
-    'vecchia','primo','prima','ultimo','ultima','ufficiale','ufficialmente','pure',
-    'subito','ancora','direttamente','semplicemente','assolutamente',
-    'wow','top','solo','così','cosi','contro','dentro','sopra','sotto','dietro',
-    // Generic noisy words that aren't useful blockers
-    'black','white','red','blue','green','grey','gray',
-    'first','second','third','final','main','full','best','worst','great','good','bad',
-    // Common YouTube title fillers
-    'ep','episode','episodio','parte','part','reaction','reactions',
-    // Italian additions from real-world scan results (EveryEye etc.)
-    'più','piu','italiano','italiana','italiani','italiane',
-    'gratis','film','ecco','modalità','modalita','modo','modi',
-    'momento','momenti','perfetto','perfetta','perfetti','perfette',
-    'prova','provato','provata','provati','provate','prove',
-    'cose','cosa','gen','pro','serie','stagione',
-    'spettacolare','spettacolari','fantastico','fantastica','fantastici','fantastiche',
-    'incredibile','incredibili','assurdo','assurda','assurdi','assurde',
-    'vogliamo','voglio','vuoi','vuole','vogliono','vorrei','vorrebbe',
-    'alto','alta','alti','alte','basso','bassa','bassi','basse',
-    'bello','bella','belli','belle','bellissimo','bellissima','bellissimi','bellissime',
-    'brutto','brutta','brutti','brutte','bruttissimo','bruttissimi',
-    'grosso','grossa','grossi','grosse','grande','grandi','piccolo','piccola',
-    'animo','aniimo','energia','corso','tempo','tempi','momenti',
-    'migliore','migliori','peggiore','peggiori','semplice','semplici',
-    'complicato','complicata','difficile','difficili','facile','facili',
-    'pure','direttamente','semplicemente','assolutamente','sicuramente',
-    'arriva','arrivano','arrivato','arrivata','arrivati','arrivate',
-    'parla','parlano','parlato','parlata','dice','dicono','detto','dico',
-    'volta','volte','spesso','raramente','recente','recenti',
-    'totalmente','completamente','letteralmente',
-    // More Italian fillers from real scans (round 2)
-    'pazzesco','pazzesca','pazzeschi','pazzesche',
-    'roba','livello','livelli','stile','stili',
-    'animazione','animazioni','animato','animata',
-    'battono','battere','battuto','battuta',
-    'capolavoro','capolavori','meraviglia','meraviglie',
-    'adoriamo','adoro','adora','adorano','adorato',
-    'grafica','grafiche','grafico','visivo','visiva',
-    'enorme','enormi','immenso','immensa','immensi','immense',
-    'rivelato','rivelata','rivelati','rivelate','svela','svelato','svelata',
-    'oltre','aggiunge','aggiunto','aggiunta','novità','novita',
-    'arriva','arrivata','arrivati','arrivate'
-  ]);
-
   function detectTopicFromTitle(title) {
     if (!title) return null;
     // Match against ALL synonym categories (not just blocked ones).
@@ -2273,11 +2194,11 @@
       return;
     }
 
-    const candidates = extractKeywords(titles);
-    showScanModal(titles.length, candidates);
+    const candidates = cfExtractKeywords(titles);
+    showScanModal(titles.length, candidates, titles);
   }
 
-  function showScanModal(videoCount, candidates) {
+  function showScanModal(videoCount, candidates, titles) {
     // Remove any existing modal
     const existing = document.getElementById('cleanfeed-scan-modal');
     if (existing) existing.remove();
@@ -2396,7 +2317,7 @@
       textContent: msg('scanAddSelected') !== 'scanAddSelected'
         ? msg('scanAddSelected')
         : 'Add selected',
-      onClick: () => confirmScanAdd(rowState, overlay)
+      onClick: () => confirmScanAdd(rowState, overlay, titles)
     });
     const footer = cfEl('div', { className: 'cleanfeed-modal-footer' }, [cancelBtn, confirmBtn]);
     panel.appendChild(footer);
@@ -2410,7 +2331,12 @@
     });
   }
 
-  async function confirmScanAdd(rowState, overlay) {
+  // Toast for "every selected keyword was skipped or already there".
+  function nothingAddedText() {
+    return msg('scanNothingAdded') !== 'scanNothingAdded' ? msg('scanNothingAdded') : 'Nothing added';
+  }
+
+  async function confirmScanAdd(rowState, overlay, titles) {
     const selected = rowState.filter(s => !s.alreadyBlocked && s.checkbox.checked);
     if (selected.length === 0) {
       showToast(msg('scanNothingSelected') !== 'scanNothingSelected'
@@ -2418,9 +2344,14 @@
       return;
     }
 
-    // Build the batch payload
+    // Build the batch payload. Safety net: a phrase that matches none of the
+    // analysed titles would never block anything, so it is skipped quietly.
     const items = [];
     for (const s of selected) {
+      if (!cfPhraseMatchesAnyTitle(titles, s.phrase)) {
+        console.debug('CleanFeed: skipped scan keyword that matches no analysed title: ' + s.phrase);
+        continue;
+      }
       const target = s.select.value;
       if (target === '__standalone') {
         items.push({ type: 'keyword', phrase: s.phrase });
@@ -2433,6 +2364,10 @@
     // background write. Previously the modal stayed open for the duration of
     // the sequential awaits — ~30s for 15-20 items.
     overlay.remove();
+    if (items.length === 0) {
+      showToast(nothingAddedText());
+      return;
+    }
     showToast('Adding ' + items.length + '…');
 
     const res = await sendMsg({ action: 'bulkAddBlockingTerms', items });
@@ -2446,7 +2381,7 @@
     if (res.addedSyn > 0) parts.push(res.addedSyn + ' synonym');
     if (res.skippedFree > 0) parts.push(res.skippedFree + ' skipped (free limit)');
     if (res.duplicates > 0) parts.push(res.duplicates + ' duplicates');
-    showToast(parts.length > 0 ? 'Added: ' + parts.join(', ') : 'Nothing added');
+    showToast(parts.length > 0 ? 'Added: ' + parts.join(', ') : nothingAddedText());
 
     // Refresh local state + refilter once (storage.onChanged also fires but
     // we do an explicit refresh to avoid race with the toast timing).
@@ -2462,103 +2397,8 @@
     }
   }
 
-  // ── Channel Scan: extract candidate keywords from visible video titles ──
-
-  // Extract the most frequent multi-occurrence words and phrases from a set
-  // of titles. Returns { phrase, count, type } objects sorted by count desc.
-  // Filters: stop words, words <3 chars, pure-numeric tokens. n-grams (2/3)
-  // are kept only if they bring new info beyond their component words.
-  function extractKeywords(titles) {
-    if (!titles || titles.length === 0) return [];
-
-    const wordCount = new Map();
-    const bigramCount = new Map();
-    const trigramCount = new Map();
-    const MIN_FREQ = 2;
-
-    function isUsefulWord(w) {
-      return w.length >= 3 && !STOP_WORDS.has(w) && !/^\d+$/.test(w);
-    }
-
-    // Tokenize WITHOUT filtering — keep ALL tokens (incl. stop words and
-    // short ones) so we can detect TRUE adjacency in the original title
-    // when building n-grams.
-    function tokenizeAll(title) {
-      const cleaned = title.toLowerCase()
-        .replace(/['’]/g, '') // strip apostrophes so "assassin's" stays together
-        .replace(/[^a-zàáâäçèéêëìíîïñòóôöùúûüß0-9\s]/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-      return cleaned.split(' ').filter(w => w.length > 0);
-    }
-
-    for (const title of titles) {
-      const allWords = tokenizeAll(title);
-
-      // Unigrams: only useful words, dedup per title
-      const seenIn = new Set();
-      for (const w of allWords) {
-        if (!isUsefulWord(w)) continue;
-        if (seenIn.has(w)) continue;
-        seenIn.add(w);
-        wordCount.set(w, (wordCount.get(w) || 0) + 1);
-      }
-
-      // Bigrams: only emit when BOTH words are useful AND truly adjacent
-      // in the original title (no stop word between them).
-      const seenBg = new Set();
-      for (let i = 0; i < allWords.length - 1; i++) {
-        const w1 = allWords[i], w2 = allWords[i + 1];
-        if (!isUsefulWord(w1) || !isUsefulWord(w2)) continue;
-        const bg = w1 + ' ' + w2;
-        if (seenBg.has(bg)) continue;
-        seenBg.add(bg);
-        bigramCount.set(bg, (bigramCount.get(bg) || 0) + 1);
-      }
-
-      // Trigrams: same — all three must be useful and truly adjacent
-      const seenTg = new Set();
-      for (let i = 0; i < allWords.length - 2; i++) {
-        const w1 = allWords[i], w2 = allWords[i + 1], w3 = allWords[i + 2];
-        if (!isUsefulWord(w1) || !isUsefulWord(w2) || !isUsefulWord(w3)) continue;
-        const tg = w1 + ' ' + w2 + ' ' + w3;
-        if (seenTg.has(tg)) continue;
-        seenTg.add(tg);
-        trigramCount.set(tg, (trigramCount.get(tg) || 0) + 1);
-      }
-    }
-
-    const candidates = [];
-
-    // Trigrams first — most specific
-    for (const [phrase, count] of trigramCount) {
-      if (count >= MIN_FREQ) candidates.push({ phrase, count, type: 'trigram' });
-    }
-    // Bigrams (skip if subsumed by a trigram with same count)
-    for (const [phrase, count] of bigramCount) {
-      if (count < MIN_FREQ) continue;
-      const subsumed = candidates.some(c =>
-        c.type === 'trigram' && c.phrase.includes(phrase) && c.count === count
-      );
-      if (!subsumed) candidates.push({ phrase, count, type: 'bigram' });
-    }
-    // Unigrams (skip if subsumed by a bigram/trigram with same count)
-    for (const [word, count] of wordCount) {
-      if (count < MIN_FREQ) continue;
-      const subsumed = candidates.some(c =>
-        c.type !== 'unigram' &&
-        c.phrase.split(' ').includes(word) &&
-        c.count === count
-      );
-      if (!subsumed) candidates.push({ phrase: word, count, type: 'unigram' });
-    }
-
-    candidates.sort((a, b) => b.count - a.count || a.phrase.localeCompare(b.phrase));
-    // Top 40 — wide enough to catch specific franchises (Ratchet & Clank,
-    // Saros, Pragmata, etc.) that appear 2-3 times, tight enough that the
-    // user doesn't drown in noise.
-    return candidates.slice(0, 40);
-  }
+  // ── Channel Scan helpers ──────────────────────────────────────────────
+  // The candidate extractor (cfExtractKeywords) lives in content-dom.js.
 
   // Map a user-blocked keyword to its canonical category (gaming, anime, ...).
   // Only a keyword that IS a category key names a category. Blocking
@@ -3230,22 +3070,12 @@
     const existing = document.getElementById('cleanfeed-quickadd-popover');
     if (existing) existing.remove();
 
-    // Build chips list — original case preserved for display, lowercase for matching
-    const titleWords = title.split(/\s+/).filter(w => w.length > 0);
-    // In QUICK-ADD context, numbers ARE often meaningful (game version, year,
-    // codename: "007 First Light", "GTA 5", "Half-Life 2", "Doom 3"). Allow
-    // them as selectable chips. Only filter true stop words and very short
-    // particles. The general scan modal still uses the stricter filter.
-    function isStopWord(w) {
-      const lower = w.toLowerCase().replace(/[^a-zàáâäçèéêëìíîïñòóôöùúûüß0-9]/g, '');
-      if (!lower) return true;
-      // Length-1 noise OK to skip, but length-2 (e.g. "PS", "AI") could matter
-      if (lower.length < 2) return true;
-      return STOP_WORDS.has(lower);
-    }
-    function tokenLower(w) {
-      return w.toLowerCase().replace(/[^a-zàáâäçèéêëìíîïñòóôöùúûüß0-9]/g, '');
-    }
+    // Chips: one per title word (stop words disabled), then pairs and triples of
+    // neighbouring words. Text keeps the title's own case and punctuation, phrase
+    // is what gets saved. In QUICK-ADD context, numbers ARE often meaningful (game
+    // version, year, codename: "007 First Light", "GTA 5", "Half-Life 2", "Doom 3"),
+    // so they are selectable; the general scan modal uses a stricter filter.
+    const chipList = cfQuickAddChips(title);
 
     // Available "Add as" targets: every blocked category (canonical), plus Standalone
     const blockedCats = getBlockedCategoryOptions();
@@ -3275,78 +3105,27 @@
     const chipsWrap = cfEl('div', { className: 'cleanfeed-quickadd-chips' });
     const selected = new Set();
 
-    // Unigram chips
-    for (const w of titleWords) {
-      const lower = w.toLowerCase().replace(/[^a-zàáâäçèéêëìíîïñòóôöùúûüß0-9]/g, '');
-      if (!lower) continue;
-      const stop = isStopWord(w);
+    for (const info of chipList) {
       const chip = cfEl('button', {
-        className: 'cleanfeed-quickadd-chip' + (stop ? ' is-stop' : ''),
-        textContent: w
+        className: 'cleanfeed-quickadd-chip'
+          + (info.kind === 'word' ? '' : ' cleanfeed-quickadd-chip-bigram')
+          + (info.stop ? ' is-stop' : ''),
+        textContent: info.text
       });
-      if (!stop) {
+      if (info.stop) {
+        chip.disabled = true;
+        chip.title = 'Common word — skipped';
+      } else {
         chip.addEventListener('click', () => {
-          if (selected.has(lower)) {
-            selected.delete(lower);
+          if (selected.has(info.phrase)) {
+            selected.delete(info.phrase);
             chip.classList.remove('selected');
           } else {
-            selected.add(lower);
+            selected.add(info.phrase);
             chip.classList.add('selected');
           }
         });
-      } else {
-        chip.disabled = true;
-        chip.title = 'Common word — skipped';
       }
-      chipsWrap.appendChild(chip);
-    }
-
-    // Bigram chips (consecutive non-stop words)
-    for (let i = 0; i < titleWords.length - 1; i++) {
-      const w1 = titleWords[i], w2 = titleWords[i + 1];
-      if (isStopWord(w1) || isStopWord(w2)) continue;
-      const phrase = (w1 + ' ' + w2).toLowerCase()
-        .replace(/[^a-zàáâäçèéêëìíîïñòóôöùúûüß0-9\s]/g, '')
-        .trim();
-      if (!phrase) continue;
-      const chip = cfEl('button', {
-        className: 'cleanfeed-quickadd-chip cleanfeed-quickadd-chip-bigram',
-        textContent: w1 + ' ' + w2
-      });
-      chip.addEventListener('click', () => {
-        if (selected.has(phrase)) {
-          selected.delete(phrase);
-          chip.classList.remove('selected');
-        } else {
-          selected.add(phrase);
-          chip.classList.add('selected');
-        }
-      });
-      chipsWrap.appendChild(chip);
-    }
-
-    // Trigram chips — catches multi-word game names like "007 First Light",
-    // "Half Life 2", "Star Wars Outlaws", "Call of Duty"
-    for (let i = 0; i < titleWords.length - 2; i++) {
-      const w1 = titleWords[i], w2 = titleWords[i + 1], w3 = titleWords[i + 2];
-      if (isStopWord(w1) || isStopWord(w2) || isStopWord(w3)) continue;
-      const phrase = (w1 + ' ' + w2 + ' ' + w3).toLowerCase()
-        .replace(/[^a-zàáâäçèéêëìíîïñòóôöùúûüß0-9\s]/g, '')
-        .trim();
-      if (!phrase) continue;
-      const chip = cfEl('button', {
-        className: 'cleanfeed-quickadd-chip cleanfeed-quickadd-chip-bigram',
-        textContent: w1 + ' ' + w2 + ' ' + w3
-      });
-      chip.addEventListener('click', () => {
-        if (selected.has(phrase)) {
-          selected.delete(phrase);
-          chip.classList.remove('selected');
-        } else {
-          selected.add(phrase);
-          chip.classList.add('selected');
-        }
-      });
       chipsWrap.appendChild(chip);
     }
     panel.appendChild(chipsWrap);
@@ -3386,63 +3165,30 @@
         }
         const target = select.value;
 
-        // Auto-merge adjacent unigram selections into phrases. If the user
-        // selected ["007", "first", "light"] as separate chips AND they appear
-        // consecutively in the title, treat them as the single phrase
-        // "007 first light" — exactly what game-name blocking needs.
-        const unigramPositions = []; // [{ pos, lower }] for each title word that the user selected
-        for (let i = 0; i < titleWords.length; i++) {
-          const lower = tokenLower(titleWords[i]);
-          if (selected.has(lower)) unigramPositions.push({ pos: i, lower });
+        // Adjacent picked words merge into one phrase cut from the title ("007",
+        // "first", "light" -> "007 first light"), and any phrase the title does not
+        // contain is dropped: it would be saved but never block anything.
+        const { phrases, skipped } = cfResolveQuickAddSelection(title, selected);
+        for (const phrase of skipped) {
+          console.debug('CleanFeed: skipped quick-add keyword that does not match the title: ' + phrase);
         }
-        // Track which lowers are part of a merged run (so we don't also emit singletons)
-        const mergedLowers = new Set();
-        const mergedPhrases = [];
-        let runStart = -1;
-        for (let i = 0; i < unigramPositions.length; i++) {
-          const cur = unigramPositions[i];
-          const prev = i > 0 ? unigramPositions[i - 1] : null;
-          if (prev && cur.pos === prev.pos + 1) {
-            // continuing a run
-            if (runStart < 0) runStart = i - 1;
-          } else {
-            // close previous run if it was multi-element
-            if (runStart >= 0) {
-              const runWords = unigramPositions.slice(runStart, i).map(x => x.lower);
-              mergedPhrases.push(runWords.join(' '));
-              runWords.forEach(w => mergedLowers.add(w));
-              runStart = -1;
-            }
-          }
-        }
-        if (runStart >= 0) {
-          const runWords = unigramPositions.slice(runStart).map(x => x.lower);
-          mergedPhrases.push(runWords.join(' '));
-          runWords.forEach(w => mergedLowers.add(w));
-        }
-
         const items = [];
-        // Add merged phrases first
-        for (const phrase of mergedPhrases) {
-          if (target === '__standalone') items.push({ type: 'keyword', phrase });
-          else if (target.startsWith('syn:')) items.push({ type: 'synonym', phrase, category: target.slice(4) });
-        }
-        // Add remaining selections: bigrams/trigrams (which contain spaces) and
-        // singleton unigrams that didn't get merged
-        for (const phrase of selected) {
-          const isMultiword = phrase.includes(' ');
-          if (!isMultiword && mergedLowers.has(phrase)) continue; // already part of a merge
+        for (const phrase of phrases) {
           if (target === '__standalone') items.push({ type: 'keyword', phrase });
           else if (target.startsWith('syn:')) items.push({ type: 'synonym', phrase, category: target.slice(4) });
         }
         overlay.remove();
+        if (items.length === 0) {
+          showToast(nothingAddedText());
+          return;
+        }
         const res = await sendMsg({ action: 'bulkAddBlockingTerms', items });
         if (res) {
           const parts = [];
           if (res.addedKw > 0) parts.push(res.addedKw + ' keyword');
           if (res.addedSyn > 0) parts.push(res.addedSyn + ' synonym');
           if (res.skippedFree > 0) parts.push(res.skippedFree + ' skipped (free limit)');
-          showToast(parts.length > 0 ? 'Added: ' + parts.join(', ') : 'Nothing added');
+          showToast(parts.length > 0 ? 'Added: ' + parts.join(', ') : nothingAddedText());
           if (res.skippedFree > 0) sendMsg({ action: 'openPaymentPage' });
           // Refresh state + refilter so the card disappears immediately
           const newState = await sendMsg({ action: 'getFullState' });

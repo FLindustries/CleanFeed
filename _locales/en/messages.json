@@ -114,6 +114,7 @@
   "scanNoCandidates": { "message": "No repeated keywords found. Try scrolling to load more videos and re-scan." },
   "scanAddSelected": { "message": "Add selected" },
   "scanNothingSelected": { "message": "Select at least one keyword" },
+  "scanNothingAdded": { "message": "Nothing added" },
   "cancel": { "message": "Cancel" },
   "hideComments": { "message": "Hide YouTube comments" },
   "hideCommentsDesc": { "message": "Hide the entire comments section on every watch page" },
