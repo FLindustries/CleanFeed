@@ -10,7 +10,7 @@
   "content_scripts": [
     {
       "matches": ["*://*.youtube.com/*"],
-      "js": ["content-dom.js", "content.js"],
+      "js": ["features.js", "content-dom.js", "content.js"],
       "css": ["styles/content.css"],
       "run_at": "document_idle"
     },

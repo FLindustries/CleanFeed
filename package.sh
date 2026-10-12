@@ -16,6 +16,7 @@ powershell -Command "
   Compress-Archive -Path \
     'manifest.json', \
     'background.js', \
+    'features.js', \
     'content.js', \
     'content-dom.js', \
     'storage.js', \

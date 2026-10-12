@@ -1,7 +1,8 @@
 // CleanFeed Content Script — v1.1
 // Runs on all YouTube pages. Handles channel/keyword blocking, menu injection,
 // curiosity window (interest boundaries), subscription exceptions, and Shorts hiding.
-// Depends on content-dom.js (cfEl, YT, matchesKeyword) loaded before this file.
+// Depends on features.js (CF_FEATURES) and content-dom.js (cfEl, YT,
+// matchesKeyword) loaded before this file.
 
 (() => {
   'use strict';
@@ -159,8 +160,9 @@
   // can unsubscribe directly.
   // Returns true if the current local time falls OUTSIDE the user's scheduled
   // filtering window. During schedule-off hours CleanFeed behaves as if paused.
+  // Schedule mode hidden (features.js): never outside, even if a user enabled it.
   function isOutsideSchedule() {
-    if (!currentSettings.scheduleEnabled) return false;
+    if (!CF_FEATURES.schedule || !currentSettings.scheduleEnabled) return false;
     const start = currentSettings.scheduleStart || '09:00';
     const end = currentSettings.scheduleEnd || '18:00';
     const days = currentSettings.scheduleDays || [1, 2, 3, 4, 5];
@@ -227,6 +229,9 @@
   // --- Daily Time Limit ---
 
   function startTimeTracker() {
+    // Daily time limit hidden (features.js): no tracker, no storage writes
+    // (each one refilters every YouTube tab), no overlay.
+    if (!CF_FEATURES.dailyTimeLimit) return;
     // Send every 30s of foreground time to background
     if (_timeTrackerInterval) clearInterval(_timeTrackerInterval);
     _timeTrackerInterval = setInterval(async () => {
@@ -318,18 +323,21 @@
     });
 
     // Re-check schedule status every 5 minutes so filtering kicks in/out on time
-    setInterval(() => {
-      if (currentSettings.scheduleEnabled) {
-        // Reset cf-checked state so cards get re-evaluated under new schedule status
-        document.querySelectorAll('[data-cf-checked]').forEach((el) => {
-          delete el.dataset.cfChecked;
-        });
-        document.querySelectorAll('.cleanfeed-hidden').forEach((el) => {
-          el.classList.remove('cleanfeed-hidden');
-        });
-        filterPage();
-      }
-    }, 5 * 60 * 1000);
+    // (only while Schedule mode exists, see features.js)
+    if (CF_FEATURES.schedule) {
+      setInterval(() => {
+        if (currentSettings.scheduleEnabled) {
+          // Reset cf-checked state so cards get re-evaluated under new schedule status
+          document.querySelectorAll('[data-cf-checked]').forEach((el) => {
+            delete el.dataset.cfChecked;
+          });
+          document.querySelectorAll('.cleanfeed-hidden').forEach((el) => {
+            el.classList.remove('cleanfeed-hidden');
+          });
+          filterPage();
+        }
+      }, 5 * 60 * 1000);
+    }
   }
 
   // Diagnostic: dump full filtering state to console once per change. Helps
@@ -1190,6 +1198,9 @@
   }
 
   function matchesSavedInterest(title, desc) {
+    // Interest Boundaries hidden (features.js): saved interests are kept in
+    // storage but exempt nothing.
+    if (!CF_FEATURES.interestBoundaries) return false;
     // Check in-memory "Just now" queries
     for (const q of activeJustNowQueries) {
       if (matchesKeyword(title, q) || matchesKeyword(desc, q)) return true;
@@ -2780,11 +2791,14 @@
   let searchWatcherInterval = null;
   function startSearchQueryWatcher() {
     if (searchWatcherInterval) clearInterval(searchWatcherInterval);
-    searchWatcherInterval = setInterval(() => {
-      if (window.location.pathname === '/results') {
-        checkSearchQueryChanged();
-      }
-    }, 1000);
+    // The URL poll only feeds the curiosity prompt (Interest Boundaries).
+    if (CF_FEATURES.interestBoundaries) {
+      searchWatcherInterval = setInterval(() => {
+        if (window.location.pathname === '/results') {
+          checkSearchQueryChanged();
+        }
+      }, 1000);
+    }
     // Clean up the interval and any pending batched logs/hits when the tab
     // is going away. pagehide fires for both real unloads and bfcache.
     window.addEventListener('pagehide', () => {
@@ -2810,6 +2824,8 @@
 
   // Wait for search results DOM to be ready, then trigger interest check
   function scheduleInterestCheck(query) {
+    // Interest Boundaries hidden (features.js): no curiosity prompt.
+    if (!CF_FEATURES.interestBoundaries) return;
     lastKnownSearchQuery = query; // prevent duplicate triggers from other paths
     if (pendingCuriosityCheck) {
       clearTimeout(pendingCuriosityCheck);

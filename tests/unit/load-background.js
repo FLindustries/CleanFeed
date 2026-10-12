@@ -1,7 +1,7 @@
 'use strict';
-// Loads ../../storage.js and ../../background.js into one fresh Node `vm`
-// context, with an in-memory chrome.storage.local and a stub ExtPay, and
-// returns the background's message handler plus the storage contents.
+// Loads ../../features.js, ../../storage.js and ../../background.js into one
+// fresh Node `vm` context, with an in-memory chrome.storage.local and a stub
+// ExtPay, and returns the background's message handler plus the storage contents.
 //
 //   const loadBackground = require('./load-background');
 //   const bg = loadBackground({ blockedKeywords: [...] });   // initial storage
@@ -9,10 +9,12 @@
 //   bg.storage();      // host-realm copy of everything in chrome.storage.local
 //   bg.writes;         // keys of every chrome.storage.local.set() call, in order
 //   bg.Storage;        // the Storage object from storage.js
+//   bg.listeners;      // { onInstalled: [fn], onStartup: [fn], onAlarm: [fn], ... }
+//   bg.alarmCalls;     // every chrome.alarms call, in order: ['create' | 'clear' | 'get', name]
 //
-// storage.js runs first, so background.js's importScripts() is a no-op: both
-// scripts share the context's global scope (like importScripts in the worker).
-// `isPro` (default false) sets what ExtPay's getUser() reports as paid.
+// features.js and storage.js run first, so background.js's importScripts() is a
+// no-op: the scripts share the context's global scope (like importScripts in
+// the worker). `isPro` (default false) sets what ExtPay's getUser() reports as paid.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -48,16 +50,23 @@ function loadBackground(initialStorage, options) {
   const isPro = !!(options && options.isPro);
   const writes = [];
   const local = fakeStorageArea(initialStorage, writes);
-  const listener = () => ({ addListener() {} });
+  const listeners = {};
+  const listener = name => ({ addListener(fn) { (listeners[name] = listeners[name] || []).push(fn); } });
+  const alarmCalls = [];
   const chrome = {
     storage: { local },
     runtime: {
-      onInstalled: listener(),
-      onStartup: listener(),
-      onMessage: listener(),
+      onInstalled: listener('onInstalled'),
+      onStartup: listener('onStartup'),
+      onMessage: listener('onMessage'),
       getManifest: () => ({ version: '0.0.0-test' })
     },
-    alarms: { onAlarm: listener(), create() {}, get(name, cb) { if (cb) cb(null); } },
+    alarms: {
+      onAlarm: listener('onAlarm'),
+      create(name) { alarmCalls.push(['create', name]); },
+      clear(name) { alarmCalls.push(['clear', name]); return Promise.resolve(true); },
+      get(name, cb) { alarmCalls.push(['get', name]); if (cb) cb(null); }
+    },
     tabs: { create() {} }
   };
   const sandbox = {
@@ -69,6 +78,8 @@ function loadBackground(initialStorage, options) {
     ExtPay: () => ({ startBackground() {}, getUser: async () => ({ paid: isPro }), openPaymentPage() {} })
   };
   vm.createContext(sandbox);
+  const featuresPath = path.join(ROOT, 'features.js');
+  vm.runInContext(fs.readFileSync(featuresPath, 'utf8'), sandbox, { filename: featuresPath });
   const storagePath = path.join(ROOT, 'storage.js');
   const backgroundPath = path.join(ROOT, 'background.js');
   vm.runInContext(fs.readFileSync(storagePath, 'utf8') + '\n;globalThis.__cfStorage = Storage;\n', sandbox, { filename: storagePath });
@@ -80,6 +91,8 @@ function loadBackground(initialStorage, options) {
     handleMessage: async request => clone(await sandbox.handleMessage(request)),
     storage: () => clone(local.data),
     writes,
+    listeners,
+    alarmCalls,
     sandbox
   };
 }

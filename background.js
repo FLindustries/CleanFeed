@@ -1,6 +1,7 @@
 // CleanFeed Background Service Worker
 
 importScripts('lib/ExtPay.js');
+importScripts('features.js');
 importScripts('storage.js');
 
 // --- ExtensionPay (resilient init) ---
@@ -26,7 +27,9 @@ async function checkProStatus() {
 
 chrome.runtime.onInstalled.addListener(async (details) => {
   await Storage.init();
-  chrome.alarms.create('smartDecay', { periodInMinutes: 24 * 60 });
+  // Smart Decay hidden (features.js): no alarm; remove one an older version made.
+  if (CF_FEATURES.smartDecay) chrome.alarms.create('smartDecay', { periodInMinutes: 24 * 60 });
+  else chrome.alarms.clear('smartDecay');
 
   // Reset the curiosity prompt counter ONLY on first install. Previously this
   // also fired on every update, resurrecting the 3-prompt free teaser every
@@ -46,6 +49,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === 'smartDecay') {
+    if (!CF_FEATURES.smartDecay) return;
     const isPro = await checkProStatus();
     if (!isPro) return;
 
@@ -57,6 +61,10 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 });
 
 chrome.runtime.onStartup.addListener(() => {
+  if (!CF_FEATURES.smartDecay) {
+    chrome.alarms.clear('smartDecay');
+    return;
+  }
   chrome.alarms.get('smartDecay', (alarm) => {
     if (!alarm) {
       chrome.alarms.create('smartDecay', { periodInMinutes: 24 * 60 });
@@ -277,6 +285,8 @@ async function handleMessage(request) {
 
     // --- Interest Boundaries ---
     case 'checkInterest': {
+      // Interest Boundaries hidden (features.js): never prompt, never count.
+      if (!CF_FEATURES.interestBoundaries) return { shouldPrompt: false };
       const onboarding = await Storage.getOnboarding();
 
       const shouldCheck = isPro
@@ -375,6 +385,8 @@ async function handleMessage(request) {
 
     // --- Daily Time Tracking ---
     case 'addTimeUsed': {
+      // Daily time limit hidden (features.js): no tracking writes.
+      if (!CF_FEATURES.dailyTimeLimit) return { success: false, reason: 'feature_hidden' };
       return await Storage.addTimeUsed(request.seconds);
     }
 

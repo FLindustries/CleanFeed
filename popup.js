@@ -40,7 +40,16 @@ function cfMsg(key, subs) {
   }
 }
 
+// Removes the UI of features hidden in features.js: every element marked
+// data-cf-feature="<flag>" whose CF_FEATURES flag is off.
+function removeHiddenFeatureUI() {
+  document.querySelectorAll('[data-cf-feature]').forEach(el => {
+    if (!CF_FEATURES[el.dataset.cfFeature]) el.remove();
+  });
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
+  removeHiddenFeatureUI();
   await loadCustomLanguage();
   await loadState();
   applyI18n();
@@ -112,23 +121,27 @@ function renderControls() {
     settingsUpdateInFlight = false;
   }));
 
-  // Toggle: Interest Boundaries (Pro)
-  container.appendChild(createToggle('interestBoundaries', 'interestBoundariesDesc', state.settings?.enableInterestBoundaries, !state.isPro, async (val) => {
-    if (!state.isPro) { chrome.runtime.sendMessage({ action: 'openPaymentPage' }); return; }
-    settingsUpdateInFlight = true;
-    await chrome.runtime.sendMessage({ action: 'updateSetting', key: 'enableInterestBoundaries', value: val });
-    state.settings.enableInterestBoundaries = val;
-    settingsUpdateInFlight = false;
-  }));
+  // Toggle: Interest Boundaries (Pro) — only while the feature exists (features.js)
+  if (CF_FEATURES.interestBoundaries) {
+    container.appendChild(createToggle('interestBoundaries', 'interestBoundariesDesc', state.settings?.enableInterestBoundaries, !state.isPro, async (val) => {
+      if (!state.isPro) { chrome.runtime.sendMessage({ action: 'openPaymentPage' }); return; }
+      settingsUpdateInFlight = true;
+      await chrome.runtime.sendMessage({ action: 'updateSetting', key: 'enableInterestBoundaries', value: val });
+      state.settings.enableInterestBoundaries = val;
+      settingsUpdateInFlight = false;
+    }));
+  }
 
-  // Toggle: Smart Decay (Pro)
-  container.appendChild(createToggle('smartDecay', 'smartDecayDesc', state.settings?.enableSmartDecay, !state.isPro, async (val) => {
-    if (!state.isPro) { chrome.runtime.sendMessage({ action: 'openPaymentPage' }); return; }
-    settingsUpdateInFlight = true;
-    await chrome.runtime.sendMessage({ action: 'updateSetting', key: 'enableSmartDecay', value: val });
-    state.settings.enableSmartDecay = val;
-    settingsUpdateInFlight = false;
-  }));
+  // Toggle: Smart Decay (Pro) — only while the feature exists (features.js)
+  if (CF_FEATURES.smartDecay) {
+    container.appendChild(createToggle('smartDecay', 'smartDecayDesc', state.settings?.enableSmartDecay, !state.isPro, async (val) => {
+      if (!state.isPro) { chrome.runtime.sendMessage({ action: 'openPaymentPage' }); return; }
+      settingsUpdateInFlight = true;
+      await chrome.runtime.sendMessage({ action: 'updateSetting', key: 'enableSmartDecay', value: val });
+      state.settings.enableSmartDecay = val;
+      settingsUpdateInFlight = false;
+    }));
+  }
 
   // Upgrade CTA (free users only)
   if (!state.isPro) {
@@ -142,7 +155,7 @@ function renderControls() {
 
     const subtitle = document.createElement('div');
     subtitle.className = 'upgrade-subtitle';
-    subtitle.textContent = 'Keyword Blocking + Interest Boundaries + Smart Decay + Hidden Log';
+    subtitle.textContent = cfMsg('upgradeProDesc');
     cta.appendChild(subtitle);
 
     const btn = document.createElement('button');
@@ -461,6 +474,7 @@ function renderHidden() {
 
 function renderInterests() {
   const container = document.getElementById('tab-interests');
+  if (!container) return; // Interests tab hidden (features.js)
   container.textContent = '';
 
   if (!state.isPro) {
@@ -540,11 +554,11 @@ chrome.storage.onChanged.addListener(async (changes) => {
   const statOnly = keys.length === 1 && keys[0] === 'stats';
   if (statOnly) {
     // Just update the stat counters without rebuilding the whole UI
+    // (renderStats skips counters the popup does not show)
     const newStats = changes.stats.newValue;
     if (newStats) {
-      document.getElementById('statBlocked').textContent = newStats.channelsBlocked || 0;
-      document.getElementById('statHidden').textContent = newStats.videosHidden || 0;
-      document.getElementById('statInterests').textContent = newStats.interestsSaved || 0;
+      state.stats = newStats;
+      renderStats();
     }
     return;
   }

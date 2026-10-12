@@ -687,7 +687,8 @@ body {
 /* --- Stats Dashboard --- */
 .stats-cards {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  /* As many equal columns as fit: the card count depends on features.js */
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 12px;
   margin-bottom: 24px;
 }
@@ -743,9 +744,6 @@ body {
   font-variant-numeric: tabular-nums;
   color: #606060;
   text-align: right;
-}
-@media (min-width: 800px) {
-  .stats-cards { grid-template-columns: repeat(4, 1fr); }
 }
 
 /* --- Preset Profiles --- */

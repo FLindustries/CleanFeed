@@ -61,7 +61,16 @@ function msg(key, subs) {
   }
 }
 
+// Removes the UI of features hidden in features.js: every element marked
+// data-cf-feature="<flag>" whose CF_FEATURES flag is off.
+function removeHiddenFeatureUI() {
+  document.querySelectorAll('[data-cf-feature]').forEach(el => {
+    if (!CF_FEATURES[el.dataset.cfFeature]) el.remove();
+  });
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
+  removeHiddenFeatureUI();
   await loadCustomLanguage();
   await loadState();
   applyI18n();
@@ -202,9 +211,11 @@ function renderStats() {
   const cards = [
     { value: videosHidden, label: msg('statsVideosHidden') !== 'statsVideosHidden' ? msg('statsVideosHidden') : 'Videos filtered' },
     { value: channelsBlocked, label: msg('statsChannelsBlocked') !== 'statsChannelsBlocked' ? msg('statsChannelsBlocked') : 'Channels blocked' },
-    { value: hoursSaved + 'h', label: msg('statsHoursSaved') !== 'statsHoursSaved' ? msg('statsHoursSaved') : 'Hours saved (est.)' },
-    { value: interestsSaved, label: msg('statsInterestsSaved') !== 'statsInterestsSaved' ? msg('statsInterestsSaved') : 'Interests saved' }
+    { value: hoursSaved + 'h', label: msg('statsHoursSaved') !== 'statsHoursSaved' ? msg('statsHoursSaved') : 'Hours saved (est.)' }
   ];
+  if (CF_FEATURES.interestBoundaries) {
+    cards.push({ value: interestsSaved, label: msg('statsInterestsSaved') !== 'statsInterestsSaved' ? msg('statsInterestsSaved') : 'Interests saved' });
+  }
 
   for (const c of cards) {
     const card = document.createElement('div');
@@ -287,54 +298,62 @@ function renderSettings() {
     notifyContentScript();
   }));
 
-  // Daily time limit toggle
-  container.appendChild(createToggle('dailyTimeLimit', 'dailyTimeLimitDesc', state.settings?.dailyTimeLimitEnabled, false, async (val) => {
-    await chrome.runtime.sendMessage({ action: 'updateSetting', key: 'dailyTimeLimitEnabled', value: val });
-    state.settings.dailyTimeLimitEnabled = val;
-    notifyContentScript();
-  }));
+  // Daily time limit toggle and minutes — only while the feature exists (features.js)
+  if (CF_FEATURES.dailyTimeLimit) {
+    container.appendChild(createToggle('dailyTimeLimit', 'dailyTimeLimitDesc', state.settings?.dailyTimeLimitEnabled, false, async (val) => {
+      await chrome.runtime.sendMessage({ action: 'updateSetting', key: 'dailyTimeLimitEnabled', value: val });
+      state.settings.dailyTimeLimitEnabled = val;
+      notifyContentScript();
+    }));
 
-  // Minutes input
-  const minsItem = document.createElement('div');
-  minsItem.className = 'toggle-item';
-  const minsInfo = document.createElement('div');
-  minsInfo.className = 'toggle-info';
-  const minsTitle = document.createElement('div');
-  minsTitle.className = 'toggle-title';
-  const minsTitleSpan = document.createElement('span');
-  minsTitleSpan.textContent = msg('dailyTimeLimitMins') !== 'dailyTimeLimitMins' ? msg('dailyTimeLimitMins') : 'Time limit (minutes)';
-  minsTitle.appendChild(minsTitleSpan);
-  minsInfo.appendChild(minsTitle);
-  const minsDesc = document.createElement('div');
-  minsDesc.className = 'toggle-desc';
-  minsDesc.textContent = msg('dailyTimeLimitMinsDesc') !== 'dailyTimeLimitMinsDesc' ? msg('dailyTimeLimitMinsDesc') : 'How many minutes per day before YouTube locks';
-  minsInfo.appendChild(minsDesc);
-  minsItem.appendChild(minsInfo);
-  const minsInput = document.createElement('input');
-  minsInput.type = 'number';
-  minsInput.min = '5';
-  minsInput.max = '480';
-  minsInput.value = state.settings?.dailyTimeLimitMins || 30;
-  minsInput.style.cssText = 'width:80px;padding:6px 10px;border:1px solid var(--cf-border, #e0e0e0);border-radius:6px;font-size:13px;text-align:center;';
-  minsInput.addEventListener('change', async () => {
-    const val = parseInt(minsInput.value, 10) || 30;
-    await chrome.runtime.sendMessage({ action: 'updateSetting', key: 'dailyTimeLimitMins', value: val });
-    state.settings.dailyTimeLimitMins = val;
-  });
-  minsItem.appendChild(minsInput);
-  container.appendChild(minsItem);
+    // Minutes input
+    const minsItem = document.createElement('div');
+    minsItem.className = 'toggle-item';
+    const minsInfo = document.createElement('div');
+    minsInfo.className = 'toggle-info';
+    const minsTitle = document.createElement('div');
+    minsTitle.className = 'toggle-title';
+    const minsTitleSpan = document.createElement('span');
+    minsTitleSpan.textContent = msg('dailyTimeLimitMins') !== 'dailyTimeLimitMins' ? msg('dailyTimeLimitMins') : 'Time limit (minutes)';
+    minsTitle.appendChild(minsTitleSpan);
+    minsInfo.appendChild(minsTitle);
+    const minsDesc = document.createElement('div');
+    minsDesc.className = 'toggle-desc';
+    minsDesc.textContent = msg('dailyTimeLimitMinsDesc') !== 'dailyTimeLimitMinsDesc' ? msg('dailyTimeLimitMinsDesc') : 'How many minutes per day before YouTube locks';
+    minsInfo.appendChild(minsDesc);
+    minsItem.appendChild(minsInfo);
+    const minsInput = document.createElement('input');
+    minsInput.type = 'number';
+    minsInput.min = '5';
+    minsInput.max = '480';
+    minsInput.value = state.settings?.dailyTimeLimitMins || 30;
+    minsInput.style.cssText = 'width:80px;padding:6px 10px;border:1px solid var(--cf-border, #e0e0e0);border-radius:6px;font-size:13px;text-align:center;';
+    minsInput.addEventListener('change', async () => {
+      const val = parseInt(minsInput.value, 10) || 30;
+      await chrome.runtime.sendMessage({ action: 'updateSetting', key: 'dailyTimeLimitMins', value: val });
+      state.settings.dailyTimeLimitMins = val;
+    });
+    minsItem.appendChild(minsInput);
+    container.appendChild(minsItem);
+  }
 
-  container.appendChild(createToggle('interestBoundaries', 'interestBoundariesDesc', state.settings?.enableInterestBoundaries, !state.isPro, async (val) => {
-    if (!state.isPro) { chrome.runtime.sendMessage({ action: 'openPaymentPage' }); return; }
-    await chrome.runtime.sendMessage({ action: 'updateSetting', key: 'enableInterestBoundaries', value: val });
-    state.settings.enableInterestBoundaries = val;
-  }));
+  // Interest Boundaries (Pro) — only while the feature exists (features.js)
+  if (CF_FEATURES.interestBoundaries) {
+    container.appendChild(createToggle('interestBoundaries', 'interestBoundariesDesc', state.settings?.enableInterestBoundaries, !state.isPro, async (val) => {
+      if (!state.isPro) { chrome.runtime.sendMessage({ action: 'openPaymentPage' }); return; }
+      await chrome.runtime.sendMessage({ action: 'updateSetting', key: 'enableInterestBoundaries', value: val });
+      state.settings.enableInterestBoundaries = val;
+    }));
+  }
 
-  container.appendChild(createToggle('smartDecay', 'smartDecayDesc', state.settings?.enableSmartDecay, !state.isPro, async (val) => {
-    if (!state.isPro) { chrome.runtime.sendMessage({ action: 'openPaymentPage' }); return; }
-    await chrome.runtime.sendMessage({ action: 'updateSetting', key: 'enableSmartDecay', value: val });
-    state.settings.enableSmartDecay = val;
-  }));
+  // Smart Decay (Pro) — only while the feature exists (features.js)
+  if (CF_FEATURES.smartDecay) {
+    container.appendChild(createToggle('smartDecay', 'smartDecayDesc', state.settings?.enableSmartDecay, !state.isPro, async (val) => {
+      if (!state.isPro) { chrome.runtime.sendMessage({ action: 'openPaymentPage' }); return; }
+      await chrome.runtime.sendMessage({ action: 'updateSetting', key: 'enableSmartDecay', value: val });
+      state.settings.enableSmartDecay = val;
+    }));
+  }
 
   // Language selector
   const langItem = document.createElement('div');
@@ -381,121 +400,123 @@ function renderSettings() {
   langItem.appendChild(langSelect);
   container.appendChild(langItem);
 
-  // Schedule mode (Pro feature)
-  const schedItem = document.createElement('div');
-  schedItem.className = 'toggle-item';
-  const schedInfo = document.createElement('div');
-  schedInfo.className = 'toggle-info';
-  const schedTitleRow = document.createElement('div');
-  schedTitleRow.className = 'toggle-title';
-  const schedTitle = document.createElement('span');
-  schedTitle.textContent = msg('scheduleMode') !== 'scheduleMode' ? msg('scheduleMode') : 'Schedule mode';
-  schedTitleRow.appendChild(schedTitle);
-  if (!state.isPro) {
-    const pro = document.createElement('span');
-    pro.className = 'pro-badge-inline';
-    pro.textContent = 'PRO';
-    schedTitleRow.appendChild(pro);
-  }
-  schedInfo.appendChild(schedTitleRow);
-  const schedDesc = document.createElement('div');
-  schedDesc.className = 'toggle-desc';
-  schedDesc.textContent = msg('scheduleModeDesc') !== 'scheduleModeDesc'
-    ? msg('scheduleModeDesc')
-    : 'Apply CleanFeed only during specific hours (e.g. work hours)';
-  schedInfo.appendChild(schedDesc);
-  schedItem.appendChild(schedInfo);
-
-  const schedToggle = document.createElement('div');
-  schedToggle.className = 'toggle-switch' + (state.settings?.scheduleEnabled ? ' active' : '') + (!state.isPro ? ' locked' : '');
-  const schedKnob = document.createElement('div');
-  schedKnob.className = 'toggle-knob';
-  schedToggle.appendChild(schedKnob);
-  schedToggle.addEventListener('click', async () => {
-    if (!state.isPro) { chrome.runtime.sendMessage({ action: 'openPaymentPage' }); return; }
-    const newVal = !schedToggle.classList.contains('active');
-    schedToggle.classList.toggle('active', newVal);
-    await chrome.runtime.sendMessage({ action: 'updateSetting', key: 'scheduleEnabled', value: newVal });
-    state.settings.scheduleEnabled = newVal;
-    notifyContentScript();
-    renderSettings(); // re-render to show/hide time pickers
-  });
-  schedItem.appendChild(schedToggle);
-  container.appendChild(schedItem);
-
-  // Time picker rows — only show when schedule enabled and Pro
-  if (state.isPro && state.settings?.scheduleEnabled) {
-    const timesRow = document.createElement('div');
-    timesRow.className = 'toggle-item';
-    timesRow.style.cssText = 'gap:12px;justify-content:flex-start;padding-left:28px;';
-
-    const fromLabel = document.createElement('span');
-    fromLabel.textContent = msg('scheduleFrom') !== 'scheduleFrom' ? msg('scheduleFrom') : 'From';
-    fromLabel.style.cssText = 'font-size:13px;color:var(--cf-text-secondary,#606060);';
-
-    const fromInput = document.createElement('input');
-    fromInput.type = 'time';
-    fromInput.value = state.settings?.scheduleStart || '09:00';
-    fromInput.style.cssText = 'padding:6px 10px;border:1px solid #e0e0e0;border-radius:6px;font-size:13px;';
-    fromInput.addEventListener('change', async () => {
-      await chrome.runtime.sendMessage({ action: 'updateSetting', key: 'scheduleStart', value: fromInput.value });
-      state.settings.scheduleStart = fromInput.value;
-      notifyContentScript();
-    });
-
-    const toLabel = document.createElement('span');
-    toLabel.textContent = msg('scheduleTo') !== 'scheduleTo' ? msg('scheduleTo') : 'to';
-    toLabel.style.cssText = 'font-size:13px;color:var(--cf-text-secondary,#606060);';
-
-    const toInput = document.createElement('input');
-    toInput.type = 'time';
-    toInput.value = state.settings?.scheduleEnd || '18:00';
-    toInput.style.cssText = 'padding:6px 10px;border:1px solid #e0e0e0;border-radius:6px;font-size:13px;';
-    toInput.addEventListener('change', async () => {
-      await chrome.runtime.sendMessage({ action: 'updateSetting', key: 'scheduleEnd', value: toInput.value });
-      state.settings.scheduleEnd = toInput.value;
-      notifyContentScript();
-    });
-
-    timesRow.appendChild(fromLabel);
-    timesRow.appendChild(fromInput);
-    timesRow.appendChild(toLabel);
-    timesRow.appendChild(toInput);
-    container.appendChild(timesRow);
-
-    // Day picker
-    const daysRow = document.createElement('div');
-    daysRow.className = 'toggle-item';
-    daysRow.style.cssText = 'gap:6px;justify-content:flex-start;padding-left:28px;flex-wrap:wrap;';
-    const dayLabel = document.createElement('span');
-    dayLabel.textContent = msg('scheduleDays') !== 'scheduleDays' ? msg('scheduleDays') : 'Days:';
-    dayLabel.style.cssText = 'font-size:13px;color:var(--cf-text-secondary,#606060);margin-right:8px;';
-    daysRow.appendChild(dayLabel);
-
-    const dayLabels = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-    const dayLabelsIt = ['Dom','Lun','Mar','Mer','Gio','Ven','Sab'];
-    const useIt = (state.settings?.language === 'it') || (navigator.language?.startsWith('it'));
-    const labels = useIt ? dayLabelsIt : dayLabels;
-    const activeDays = new Set(state.settings?.scheduleDays || [1,2,3,4,5]);
-
-    for (let d = 0; d < 7; d++) {
-      const chip = document.createElement('button');
-      chip.className = 'day-chip' + (activeDays.has(d) ? ' active' : '');
-      chip.textContent = labels[d];
-      chip.style.cssText = 'padding:4px 8px;font-size:11px;border:1px solid ' + (activeDays.has(d) ? '#00c853' : '#e0e0e0') + ';background:' + (activeDays.has(d) ? '#00c853' : 'transparent') + ';color:' + (activeDays.has(d) ? '#fff' : '#0f0f0f') + ';border-radius:999px;cursor:pointer;';
-      chip.addEventListener('click', async () => {
-        const cur = new Set(state.settings?.scheduleDays || []);
-        if (cur.has(d)) cur.delete(d);
-        else cur.add(d);
-        const arr = [...cur].sort();
-        await chrome.runtime.sendMessage({ action: 'updateSetting', key: 'scheduleDays', value: arr });
-        state.settings.scheduleDays = arr;
-        notifyContentScript();
-        renderSettings();
-      });
-      daysRow.appendChild(chip);
+  // Schedule mode (Pro feature) — only while the feature exists (features.js)
+  if (CF_FEATURES.schedule) {
+    const schedItem = document.createElement('div');
+    schedItem.className = 'toggle-item';
+    const schedInfo = document.createElement('div');
+    schedInfo.className = 'toggle-info';
+    const schedTitleRow = document.createElement('div');
+    schedTitleRow.className = 'toggle-title';
+    const schedTitle = document.createElement('span');
+    schedTitle.textContent = msg('scheduleMode') !== 'scheduleMode' ? msg('scheduleMode') : 'Schedule mode';
+    schedTitleRow.appendChild(schedTitle);
+    if (!state.isPro) {
+      const pro = document.createElement('span');
+      pro.className = 'pro-badge-inline';
+      pro.textContent = 'PRO';
+      schedTitleRow.appendChild(pro);
     }
-    container.appendChild(daysRow);
+    schedInfo.appendChild(schedTitleRow);
+    const schedDesc = document.createElement('div');
+    schedDesc.className = 'toggle-desc';
+    schedDesc.textContent = msg('scheduleModeDesc') !== 'scheduleModeDesc'
+      ? msg('scheduleModeDesc')
+      : 'Apply CleanFeed only during specific hours (e.g. work hours)';
+    schedInfo.appendChild(schedDesc);
+    schedItem.appendChild(schedInfo);
+
+    const schedToggle = document.createElement('div');
+    schedToggle.className = 'toggle-switch' + (state.settings?.scheduleEnabled ? ' active' : '') + (!state.isPro ? ' locked' : '');
+    const schedKnob = document.createElement('div');
+    schedKnob.className = 'toggle-knob';
+    schedToggle.appendChild(schedKnob);
+    schedToggle.addEventListener('click', async () => {
+      if (!state.isPro) { chrome.runtime.sendMessage({ action: 'openPaymentPage' }); return; }
+      const newVal = !schedToggle.classList.contains('active');
+      schedToggle.classList.toggle('active', newVal);
+      await chrome.runtime.sendMessage({ action: 'updateSetting', key: 'scheduleEnabled', value: newVal });
+      state.settings.scheduleEnabled = newVal;
+      notifyContentScript();
+      renderSettings(); // re-render to show/hide time pickers
+    });
+    schedItem.appendChild(schedToggle);
+    container.appendChild(schedItem);
+
+    // Time picker rows — only show when schedule enabled and Pro
+    if (state.isPro && state.settings?.scheduleEnabled) {
+      const timesRow = document.createElement('div');
+      timesRow.className = 'toggle-item';
+      timesRow.style.cssText = 'gap:12px;justify-content:flex-start;padding-left:28px;';
+
+      const fromLabel = document.createElement('span');
+      fromLabel.textContent = msg('scheduleFrom') !== 'scheduleFrom' ? msg('scheduleFrom') : 'From';
+      fromLabel.style.cssText = 'font-size:13px;color:var(--cf-text-secondary,#606060);';
+
+      const fromInput = document.createElement('input');
+      fromInput.type = 'time';
+      fromInput.value = state.settings?.scheduleStart || '09:00';
+      fromInput.style.cssText = 'padding:6px 10px;border:1px solid #e0e0e0;border-radius:6px;font-size:13px;';
+      fromInput.addEventListener('change', async () => {
+        await chrome.runtime.sendMessage({ action: 'updateSetting', key: 'scheduleStart', value: fromInput.value });
+        state.settings.scheduleStart = fromInput.value;
+        notifyContentScript();
+      });
+
+      const toLabel = document.createElement('span');
+      toLabel.textContent = msg('scheduleTo') !== 'scheduleTo' ? msg('scheduleTo') : 'to';
+      toLabel.style.cssText = 'font-size:13px;color:var(--cf-text-secondary,#606060);';
+
+      const toInput = document.createElement('input');
+      toInput.type = 'time';
+      toInput.value = state.settings?.scheduleEnd || '18:00';
+      toInput.style.cssText = 'padding:6px 10px;border:1px solid #e0e0e0;border-radius:6px;font-size:13px;';
+      toInput.addEventListener('change', async () => {
+        await chrome.runtime.sendMessage({ action: 'updateSetting', key: 'scheduleEnd', value: toInput.value });
+        state.settings.scheduleEnd = toInput.value;
+        notifyContentScript();
+      });
+
+      timesRow.appendChild(fromLabel);
+      timesRow.appendChild(fromInput);
+      timesRow.appendChild(toLabel);
+      timesRow.appendChild(toInput);
+      container.appendChild(timesRow);
+
+      // Day picker
+      const daysRow = document.createElement('div');
+      daysRow.className = 'toggle-item';
+      daysRow.style.cssText = 'gap:6px;justify-content:flex-start;padding-left:28px;flex-wrap:wrap;';
+      const dayLabel = document.createElement('span');
+      dayLabel.textContent = msg('scheduleDays') !== 'scheduleDays' ? msg('scheduleDays') : 'Days:';
+      dayLabel.style.cssText = 'font-size:13px;color:var(--cf-text-secondary,#606060);margin-right:8px;';
+      daysRow.appendChild(dayLabel);
+
+      const dayLabels = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+      const dayLabelsIt = ['Dom','Lun','Mar','Mer','Gio','Ven','Sab'];
+      const useIt = (state.settings?.language === 'it') || (navigator.language?.startsWith('it'));
+      const labels = useIt ? dayLabelsIt : dayLabels;
+      const activeDays = new Set(state.settings?.scheduleDays || [1,2,3,4,5]);
+
+      for (let d = 0; d < 7; d++) {
+        const chip = document.createElement('button');
+        chip.className = 'day-chip' + (activeDays.has(d) ? ' active' : '');
+        chip.textContent = labels[d];
+        chip.style.cssText = 'padding:4px 8px;font-size:11px;border:1px solid ' + (activeDays.has(d) ? '#00c853' : '#e0e0e0') + ';background:' + (activeDays.has(d) ? '#00c853' : 'transparent') + ';color:' + (activeDays.has(d) ? '#fff' : '#0f0f0f') + ';border-radius:999px;cursor:pointer;';
+        chip.addEventListener('click', async () => {
+          const cur = new Set(state.settings?.scheduleDays || []);
+          if (cur.has(d)) cur.delete(d);
+          else cur.add(d);
+          const arr = [...cur].sort();
+          await chrome.runtime.sendMessage({ action: 'updateSetting', key: 'scheduleDays', value: arr });
+          state.settings.scheduleDays = arr;
+          notifyContentScript();
+          renderSettings();
+        });
+        daysRow.appendChild(chip);
+      }
+      container.appendChild(daysRow);
+    }
   }
 
   // Strict mode (Pro feature)
@@ -1081,6 +1102,7 @@ function renderHidden() {
 
 function renderInterests() {
   const container = document.getElementById('interest-list');
+  if (!container) return; // Interests section hidden (features.js)
   container.textContent = '';
 
   if (!state.isPro) {

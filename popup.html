@@ -32,14 +32,15 @@
     <button class="tab active" data-tab="controls" data-i18n="controls">Controls</button>
     <button class="tab" data-tab="blocked" data-i18n="blocked">Blocked</button>
     <button class="tab" data-tab="hidden" data-i18n="hidden">Hidden</button>
-    <button class="tab" data-tab="interests" data-i18n="interests">Interests</button>
+    <button class="tab" data-tab="interests" data-i18n="interests" data-cf-feature="interestBoundaries">Interests</button>
   </div>
 
   <div class="tab-content active" id="tab-controls"></div>
   <div class="tab-content" id="tab-blocked"></div>
   <div class="tab-content" id="tab-hidden"></div>
-  <div class="tab-content" id="tab-interests"></div>
+  <div class="tab-content" id="tab-interests" data-cf-feature="interestBoundaries"></div>
 
+  <script src="features.js"></script>
   <script src="content-dom.js"></script>
   <script src="popup.js"></script>
 </body>
