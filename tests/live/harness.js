@@ -384,8 +384,9 @@ async function enableDeveloperMode() {
 
 // Reloads the extension like an update does: chrome.runtime.reload() in the
 // service worker (from disk, so changes to an unpacked copy apply), then waits
-// for the new service worker and for onInstalled's storage setup. Content
-// scripts in open tabs are orphaned. Returns the ms until the new worker ran.
+// for the new service worker and checks its storage answers. onInstalled
+// (reason "update") runs in the new worker; content scripts in open tabs are
+// orphaned. Returns the ms until the new worker ran.
 async function reloadExtension() {
   const context = requireContext();
   await enableDeveloperMode();
