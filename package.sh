@@ -24,6 +24,7 @@ powershell -Command "
     'popup.js', \
     'options.html', \
     'options.js', \
+    'strict-client.js', \
     'styles', \
     'icons', \
     'lib', \

@@ -609,32 +609,9 @@ function renderSettings() {
   container.appendChild(strictItem);
 }
 
-// The strict-mode password the background accepted on this page, kept in
-// memory only for the page's lifetime (never stored), so it's asked once.
-let strictPassword = '';
-
-// Sends a message to the background. While strict mode is on, a request that
-// weakens filtering comes back { error: 'strict_locked' }: ask for the
-// password, retry with it, and remember it once accepted. Returns the
-// background's response (still strict_locked if cancelled or wrong).
-async function sendWithStrict(request) {
-  let res = await chrome.runtime.sendMessage(strictPassword ? { ...request, strictPassword } : request);
-  if (res?.error !== 'strict_locked') return res;
-  strictPassword = '';
-  const pwd = prompt(msg('strictRequiresPassword') !== 'strictRequiresPassword'
-    ? msg('strictRequiresPassword')
-    : 'Strict mode is enabled. Enter password to continue:');
-  if (!pwd) return res;
-  res = await chrome.runtime.sendMessage({ ...request, strictPassword: pwd });
-  if (res?.error === 'strict_locked') {
-    alert(msg('strictWrongPassword') !== 'strictWrongPassword'
-      ? msg('strictWrongPassword')
-      : 'Wrong password.');
-  } else {
-    strictPassword = pwd;
-  }
-  return res;
-}
+// Sends a message to the background, asking once for the strict-mode
+// password when a weakening request is locked (strict-client.js).
+const sendWithStrict = cfCreateStrictSender(msg);
 
 function createToggle(titleKey, descKey, isActive, isLocked, onChange) {
   const item = document.createElement('div');
