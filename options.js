@@ -33,25 +33,9 @@ async function loadCustomLanguage() {
 }
 
 function msg(key, subs) {
-  // Try custom messages first (if language override is set)
-  if (_customMessages && _customMessages[key]) {
-    let text = _customMessages[key].message;
-    if (subs && Array.isArray(subs)) {
-      subs.forEach((sub, i) => {
-        text = text.replace('$' + (i + 1), sub);
-        // Also replace named placeholders
-        const placeholders = _customMessages[key].placeholders;
-        if (placeholders) {
-          for (const [name, ph] of Object.entries(placeholders)) {
-            if (ph.content === '$' + (i + 1)) {
-              text = text.replace('$' + name.toUpperCase() + '$', sub);
-            }
-          }
-        }
-      });
-    }
-    return text;
-  }
+  // Try custom messages first (if language override is set), formatted
+  // like chrome.i18n (content-dom.js)
+  if (_customMessages && _customMessages[key]) return cfFormatMessage(_customMessages[key], subs);
   // Fallback to chrome.i18n native API
   try {
     const m = chrome.i18n.getMessage(key, subs);
@@ -178,12 +162,12 @@ function renderPresets() {
     card.addEventListener('click', async () => {
       const res = await chrome.runtime.sendMessage({ action: 'applyPreset', categoryKeys: preset.keys });
       if (res?.reason === 'free_limit') {
-        alert(msg('presetFreeLimitWarning') !== 'presetFreeLimitWarning'
-          ? msg('presetFreeLimitWarning').replace('$WOULD$', res.wouldAdd).replace('$LIMIT$', '3')
-          : 'This preset would add ' + res.wouldAdd + ' more keywords but you have a 3-keyword limit. Upgrade to Pro for unlimited.');
-        chrome.runtime.sendMessage({ action: 'openPaymentPage' });
+        presetLimitNotice = { id: preset.id, limit: res.limit || 3 };
+        await loadState();
+        renderPresets();
         return;
       }
+      presetLimitNotice = null;
       if (res?.success) {
         await loadState();
         renderAll();
@@ -192,6 +176,37 @@ function renderPresets() {
     });
     container.appendChild(card);
   }
+  renderPresetLimitNotice(blockedKwSet);
+}
+
+// Free plan: the preset last clicked did not fit. { id, limit } or null.
+let presetLimitNotice = null;
+
+// Says why that preset was not applied (topics it adds, free slots left,
+// from the current state) with an Upgrade button the user can choose to
+// click. Hidden once the preset fits or the user is Pro.
+function renderPresetLimitNotice(blockedKwSet) {
+  const notice = document.getElementById('presets-notice');
+  if (!notice) return;
+  notice.textContent = '';
+  const preset = presetLimitNotice && PRESETS.find(p => p.id === presetLimitNotice.id);
+  const limit = presetLimitNotice ? presetLimitNotice.limit : 0;
+  const used = (state.blockedKeywords || []).length;
+  const add = preset ? preset.keys.filter(k => !blockedKwSet.has(k.toLowerCase())).length : 0;
+  if (!preset || state.isPro || add === 0 || used + add <= limit) {
+    presetLimitNotice = null;
+    notice.hidden = true;
+    return;
+  }
+  const text = document.createElement('p');
+  text.textContent = msg('presetFreeLimitWarning', [String(add), String(Math.max(0, limit - used)), String(limit)]);
+  const btn = document.createElement('button');
+  btn.className = 'btn btn-primary';
+  btn.textContent = msg('upgradeToPro');
+  btn.addEventListener('click', () => chrome.runtime.sendMessage({ action: 'openPaymentPage' }));
+  notice.appendChild(text);
+  notice.appendChild(btn);
+  notice.hidden = false;
 }
 
 function renderStats() {
@@ -1307,6 +1322,8 @@ chrome.storage.onChanged.addListener(async (changes) => {
   const keys = Object.keys(changes);
   const statOnly = keys.length === 1 && keys[0] === 'stats';
   if (statOnly) return;
+  // Pro status re-checked with the same answer (content-dom.js)
+  if (cfIsProBookkeepingOnly(changes)) return;
   await loadState();
   renderAll();
 });

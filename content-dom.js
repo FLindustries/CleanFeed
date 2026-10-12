@@ -29,6 +29,52 @@ function cfEl(tag, attrs, children) {
   return el;
 }
 
+// Formats one messages.json entry ({ message, placeholders }) the way
+// chrome.i18n.getMessage does, for the language chosen in Settings:
+// $NAME$ takes its placeholder's content, $1..$9 take `subs` (a missing one
+// is empty), and $$ is a literal $ ("$$3.99" shows "$3.99"). Substitutions
+// are inserted as plain text.
+function cfFormatMessage(entry, subs) {
+  if (!entry || typeof entry.message !== 'string') return '';
+  const list = (subs === undefined || subs === null ? [] : Array.isArray(subs) ? subs : [subs]).map(String);
+  const named = {};
+  if (entry.placeholders && typeof entry.placeholders === 'object') {
+    for (const [name, ph] of Object.entries(entry.placeholders)) {
+      named[name.toLowerCase()] = ph && typeof ph.content === 'string' ? ph.content : '';
+    }
+  }
+  const text = entry.message.replace(/\$([A-Za-z0-9_@]+)\$/g, (whole, name) =>
+    Object.prototype.hasOwnProperty.call(named, name.toLowerCase()) ? named[name.toLowerCase()] : whole);
+  let out = '';
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== '$') { out += text[i]; continue; }
+    const next = text[++i];
+    if (next === '$') {
+      // "$$" is one "$"; in a longer run every further "$" is kept
+      while (text[i] === '$') { out += '$'; i++; }
+      i--;
+    } else if (next >= '1' && next <= '9') {
+      out += list[next.charCodeAt(0) - 49] || '';
+    }
+    // Like Chrome: a "$" before anything else is dropped with that character
+  }
+  return out;
+}
+
+// True when a chrome.storage change only touches Pro-status bookkeeping
+// (the background's proStatusCache, ExtPay's extensionpay_* keys) and the
+// Pro answer itself did not change: nothing to re-filter or re-render.
+function cfIsProBookkeepingOnly(changes) {
+  const keys = Object.keys(changes || {});
+  if (keys.length === 0) return false;
+  if (!keys.every(key => key === 'proStatusCache' || key.startsWith('extensionpay_'))) return false;
+  const pro = changes.proStatusCache;
+  if (!pro) return true;
+  const wasPro = !!(pro.oldValue && pro.oldValue.isPro === true);
+  const isPro = !!(pro.newValue && pro.newValue.isPro === true);
+  return wasPro === isPro;
+}
+
 // Validates a string as a plausible channel name. YouTube's metadata spans
 // can contain separators ("•", "·"), view counts ("1 Mln di visualizzazioni"),
 // dates ("3 giorni fa"), or the channel's own dot — none of which are real

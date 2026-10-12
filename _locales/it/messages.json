@@ -146,10 +146,11 @@
   "presetsTitle": { "message": "Preset rapidi" },
   "presetsDesc": { "message": "Pacchetti pronti per bloccare gruppi di contenuti comuni." },
   "presetFreeLimitWarning": {
-    "message": "Questo preset aggiungerebbe $WOULD$ keyword, ma il piano gratuito ne permette $LIMIT$. Passa a Pro per illimitate.",
+    "message": "Questo preset non rientra nel piano gratuito. Argomenti che aggiunge: $ADD$. Posti liberi nel piano gratuito: $LEFT$ su $LIMIT$. Con Pro non c'è limite.",
     "placeholders": {
-      "would": { "content": "$1" },
-      "limit": { "content": "$2" }
+      "add": { "content": "$1" },
+      "left": { "content": "$2" },
+      "limit": { "content": "$3" }
     }
   },
   "scheduleMode": { "message": "Modalità programmata" },

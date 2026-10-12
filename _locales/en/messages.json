@@ -46,7 +46,7 @@
   "clearAll": { "message": "Clear All" },
   "clearAllConfirm": { "message": "Clear all blocked channels? This cannot be undone." },
   "unlockFeatures": { "message": "Unlock all features" },
-  "upgradeToPro": { "message": "Upgrade to Pro — $3.99/mo" },
+  "upgradeToPro": { "message": "Upgrade to Pro — $$3.99/mo" },
   "pro": { "message": "PRO" },
   "free": { "message": "FREE" },
   "noBlockedChannels": { "message": "No channels blocked yet. Use the three-dot menu on any YouTube video to block a channel." },
@@ -146,10 +146,11 @@
   "presetsTitle": { "message": "Quick presets" },
   "presetsDesc": { "message": "One-click bundles to block common content groups." },
   "presetFreeLimitWarning": {
-    "message": "This preset would add $WOULD$ more keywords but free plan allows max $LIMIT$. Upgrade to Pro for unlimited.",
+    "message": "This preset doesn't fit the free plan. Topics it adds: $ADD$. Free slots left: $LEFT$ of $LIMIT$. Pro has no limit.",
     "placeholders": {
-      "would": { "content": "$1" },
-      "limit": { "content": "$2" }
+      "add": { "content": "$1" },
+      "left": { "content": "$2" },
+      "limit": { "content": "$3" }
     }
   },
   "scheduleMode": { "message": "Schedule mode" },

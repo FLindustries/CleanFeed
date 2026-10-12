@@ -1,0 +1,180 @@
+'use strict';
+// Live test for cached Pro status, the English price and Quick presets on
+// the free plan (findings #13, #52, #26).
+//   node tests/live/presets.js   (about 30 s)
+//  1. Service worker start caches Pro status: chrome.storage.local
+//     proStatusCache = { isPro: false, checkedAt } for this free user.
+//  2. Prices: "Upgrade to Pro — $3.99/mo" on Auto (chrome.i18n.getMessage)
+//     and with English chosen in Settings (the custom loader), in options.html
+//     and popup.html; Italian shows "Passa a Pro — 3,99€/mese".
+//  3. options.html, free user with 1 keyword: clicking "Focus mode" adds
+//     nothing, shows no alert and opens no page; an inline notice gives the
+//     real numbers (adds 3, 2 of 3 slots left) with an Upgrade button. The
+//     same in Italian. A preset whose topics are all blocked already applies
+//     with no notice.
+// Prints a JSON report; exit 0 only if every scenario passes. YouTube is not
+// opened; the Upgrade button is never clicked.
+
+const h = require('./harness');
+
+const PRICE_EN = 'Upgrade to Pro — $3.99/mo';
+const PRICE_IT = 'Passa a Pro — 3,99€/mese';
+const NOTICE_EN = "This preset doesn't fit the free plan. Topics it adds: 3. Free slots left: 2 of 3. Pro has no limit.";
+const NOTICE_IT = "Questo preset non rientra nel piano gratuito. Argomenti che aggiunge: 3. Posti liberi nel piano gratuito: 2 su 3. Con Pro non c'è limite.";
+
+const keywords = list => list.map(keyword => ({ keyword, addedAt: Date.now() }));
+const names = list => (list || []).map(k => k.keyword);
+
+async function setLanguage(language) {
+  const { settings } = await h.getStorage(['settings']);
+  await h.setStorage({ settings: Object.assign({}, settings, { language }) });
+}
+
+// Opens an extension page, recording console errors, page errors and dialogs
+// (every dialog is dismissed).
+async function openExtensionPage(file) {
+  const errors = [];
+  const dialogs = [];
+  const page = await h.newPage();
+  page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+  page.on('pageerror', e => errors.push('pageerror: ' + e.message));
+  page.on('dialog', d => { dialogs.push({ type: d.type(), message: d.message() }); d.dismiss().catch(() => {}); });
+  await h.withTimeout(
+    page.goto(`chrome-extension://${h.getExtensionId()}/${file}`, { waitUntil: 'domcontentloaded', timeout: 15000 }),
+    17000, 'open ' + file
+  );
+  await h.sleep(800);
+  return { page, errors, dialogs };
+}
+
+const text = (page, selector) => h.evalInPage(page, s => {
+  const el = document.querySelector(s);
+  return el ? el.textContent : null;
+}, selector);
+
+async function proCacheScenario() {
+  const r = { name: 'service worker start caches Pro status', pass: false, reasons: [] };
+  const deadline = Date.now() + 8000;
+  let s = await h.getStorage(['proStatusCache']);
+  while (!s.proStatusCache && Date.now() < deadline) {
+    await h.sleep(250);
+    s = await h.getStorage(['proStatusCache']);
+  }
+  r.proStatusCache = s.proStatusCache;
+  const c = s.proStatusCache;
+  if (!c || c.isPro !== false || !Number.isFinite(c.checkedAt)) r.reasons.push('expected { isPro: false, checkedAt }, got ' + JSON.stringify(c));
+  else if (Math.abs(Date.now() - c.checkedAt) > 5 * 60 * 1000) r.reasons.push('checkedAt is not recent');
+  r.pass = r.reasons.length === 0;
+  return r;
+}
+
+async function priceScenario() {
+  const r = { name: 'prices: $3.99/mo in English (Auto and chosen), 3,99€/mese in Italian', pass: false, reasons: [], seen: {} };
+  const errors = [];
+  for (const language of ['auto', 'en', 'it']) {
+    await setLanguage(language);
+    const expected = language === 'it' ? PRICE_IT : PRICE_EN;
+    for (const [file, selector] of [['options.html', '#upgradeBtn'], ['popup.html', '.upgrade-btn']]) {
+      const { page, errors: pageErrors } = await openExtensionPage(file);
+      try {
+        const shown = await text(page, selector);
+        r.seen[`${language} ${file}`] = shown;
+        if (shown !== expected) r.reasons.push(`${language} ${file}: "${shown}", expected "${expected}"`);
+      } finally {
+        await page.close().catch(() => {});
+      }
+      errors.push(...pageErrors);
+    }
+  }
+  if (errors.length) r.reasons.push('console/page errors: ' + errors.join(' | '));
+  r.pass = r.reasons.length === 0;
+  return r;
+}
+
+async function presetScenario(language, expectedNotice, expectedPrice) {
+  const r = { name: `options (${language}): Focus mode on the free plan`, pass: false, reasons: [], steps: {} };
+  await setLanguage(language);
+  await h.setStorage({ blockedKeywords: keywords(['gaming']) });
+  const { page, errors, dialogs } = await openExtensionPage('options.html');
+  try {
+    const noticeHiddenAtStart = await h.evalInPage(page, () => document.getElementById('presets-notice').hidden);
+    const pagesBefore = page.context().pages().length;
+    const card = page.locator('.preset-card', { hasText: 'Focus mode' }).first();
+    await h.withTimeout(card.click({ timeout: 8000 }), 10000, 'click Focus mode');
+    await h.withTimeout(page.waitForSelector('#presets-notice:not([hidden])', { timeout: 5000 }), 7000, 'preset notice');
+    await h.sleep(800);
+    const notice = await h.evalInPage(page, () => {
+      const el = document.getElementById('presets-notice');
+      const btn = el.querySelector('button');
+      return { text: (el.querySelector('p') || {}).textContent, button: btn ? btn.textContent : null, visible: el.offsetHeight > 0 };
+    });
+    const s = await h.getStorage(['blockedKeywords']);
+    r.steps.overCap = { noticeHiddenAtStart, notice, dialogs: dialogs.slice(), newPages: page.context().pages().length - pagesBefore, keywords: names(s.blockedKeywords) };
+    if (!noticeHiddenAtStart) r.reasons.push('notice shown before any click');
+    if (notice.text !== expectedNotice) r.reasons.push(`notice: "${notice.text}", expected "${expectedNotice}"`);
+    if (notice.button !== expectedPrice) r.reasons.push(`notice button: "${notice.button}"`);
+    if (!notice.visible) r.reasons.push('notice not visible');
+    if (dialogs.length) r.reasons.push('dialog shown: ' + JSON.stringify(dialogs));
+    if (r.steps.overCap.newPages !== 0) r.reasons.push('a new page (payment?) opened');
+    if (names(s.blockedKeywords).join() !== 'gaming') r.reasons.push('keywords changed: ' + names(s.blockedKeywords).join());
+
+    // All of its topics blocked already (more than 3 keywords, e.g. Pro lapsed): applies, no notice
+    await h.setStorage({ blockedKeywords: keywords(['gaming', 'gossip', 'reaction', 'brainrot', 'news']) });
+    await h.sleep(800);
+    await h.withTimeout(card.click({ timeout: 8000 }), 10000, 'click Focus mode again');
+    await h.sleep(1000);
+    const after = await h.evalInPage(page, () => ({
+      noticeHidden: document.getElementById('presets-notice').hidden,
+      active: !!document.querySelector('.preset-card.preset-active')
+    }));
+    const s2 = await h.getStorage(['blockedKeywords']);
+    r.steps.allBlocked = { after, dialogs: dialogs.slice(), keywords: names(s2.blockedKeywords) };
+    if (!after.noticeHidden) r.reasons.push('notice still shown once every topic of the preset is blocked');
+    if (!after.active) r.reasons.push('Focus mode not marked active');
+    if (dialogs.length) r.reasons.push('dialog shown: ' + JSON.stringify(dialogs));
+    if (names(s2.blockedKeywords).length !== 5) r.reasons.push('keywords changed: ' + names(s2.blockedKeywords).join());
+  } finally {
+    await page.close().catch(() => {});
+  }
+  if (errors.length) r.reasons.push('console/page errors: ' + errors.join(' | '));
+  r.pass = r.reasons.length === 0;
+  return r;
+}
+
+async function main() {
+  const startedAt = Date.now();
+  const cancelWatchdog = h.watchdog(180000);
+  let report;
+  try {
+    await h.launch();
+    const scenarios = [];
+    const run = [
+      proCacheScenario,
+      priceScenario,
+      () => presetScenario('auto', NOTICE_EN, PRICE_EN),
+      () => presetScenario('it', NOTICE_IT, PRICE_IT)
+    ];
+    for (const scenario of run) {
+      try {
+        scenarios.push(await scenario());
+      } catch (err) {
+        scenarios.push({ name: scenario.name || 'preset scenario', pass: false, reasons: [String(err && err.message || err).split('\n')[0]] });
+      }
+    }
+    report = {
+      ok: scenarios.every(s => s.pass),
+      summary: scenarios.map(s => `${s.pass ? 'PASS' : 'FAIL'} ${s.name}${s.pass ? '' : ': ' + s.reasons.join('; ')}`),
+      scenarios,
+      elapsedMs: Date.now() - startedAt
+    };
+  } catch (err) {
+    report = { ok: false, error: String(err && err.stack || err), elapsedMs: Date.now() - startedAt };
+  } finally {
+    await h.close();
+    cancelWatchdog();
+  }
+  console.log(JSON.stringify(report, null, 2));
+  process.exit(report.ok ? 0 : 1);
+}
+
+main();

@@ -70,24 +70,8 @@
   }
 
   function msg(key, subs) {
-    // Try custom language first
-    if (_contentMessages && _contentMessages[key]) {
-      let text = _contentMessages[key].message;
-      if (subs && Array.isArray(subs)) {
-        subs.forEach((sub, i) => {
-          text = text.replace('$' + (i + 1), sub);
-          const placeholders = _contentMessages[key].placeholders;
-          if (placeholders) {
-            for (const [name, ph] of Object.entries(placeholders)) {
-              if (ph.content === '$' + (i + 1)) {
-                text = text.replace('$' + name.toUpperCase() + '$', sub);
-              }
-            }
-          }
-        });
-      }
-      return text;
-    }
+    // Try custom language first, formatted like chrome.i18n (content-dom.js)
+    if (_contentMessages && _contentMessages[key]) return cfFormatMessage(_contentMessages[key], subs);
     try {
       return chrome.i18n?.getMessage(key, subs) || key;
     } catch (e) {
@@ -590,6 +574,8 @@
     // the categoryTags key
     const hitsOnly = keys.length > 0 && keys.every(k => k === 'categoryHits' || k === 'categoryHitVideos');
     if (hitsOnly) return;
+    // Pro status re-checked with the same answer (content-dom.js)
+    if (cfIsProBookkeepingOnly(changes)) return;
 
     const wasStrictLocked = isStrictLocked();
     const state = await sendMsg({ action: 'getFullState' });

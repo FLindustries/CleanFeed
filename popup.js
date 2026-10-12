@@ -16,23 +16,8 @@ async function loadCustomLanguage() {
 }
 
 function cfMsg(key, subs) {
-  if (_customMessages && _customMessages[key]) {
-    let text = _customMessages[key].message;
-    if (subs && Array.isArray(subs)) {
-      subs.forEach((sub, i) => {
-        text = text.replace('$' + (i + 1), sub);
-        const placeholders = _customMessages[key].placeholders;
-        if (placeholders) {
-          for (const [name, ph] of Object.entries(placeholders)) {
-            if (ph.content === '$' + (i + 1)) {
-              text = text.replace('$' + name.toUpperCase() + '$', sub);
-            }
-          }
-        }
-      });
-    }
-    return text;
-  }
+  // Language chosen in Settings: format like chrome.i18n (content-dom.js)
+  if (_customMessages && _customMessages[key]) return cfFormatMessage(_customMessages[key], subs);
   try {
     return chrome.i18n.getMessage(key, subs) || key;
   } catch (e) {
@@ -573,6 +558,8 @@ chrome.storage.onChanged.addListener(async (changes) => {
   }
   // Skip re-render if we're mid-toggle update to avoid reverting visual state
   if (settingsUpdateInFlight && keys.length === 1 && keys[0] === 'settings') return;
+  // Pro status re-checked with the same answer (content-dom.js)
+  if (cfIsProBookkeepingOnly(changes)) return;
   await loadState();
   renderAll();
 });

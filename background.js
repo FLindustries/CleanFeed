@@ -13,15 +13,125 @@ try {
   console.warn('CleanFeed: ExtensionPay init failed:', e);
 }
 
-async function checkProStatus() {
+// --- Pro status (cached) ---
+// extpay.getUser() is a request to extensionpay.com (once the user has ever
+// opened the payment page), so the answer is cached in memory and in
+// chrome.storage.local `proStatusCache`: { isPro, checkedAt }. It is
+// refreshed on service worker start, when ExtPay reports a payment, and in
+// the background when older than PRO_CACHE_TTL_MS. A failed refresh keeps the
+// last known answer (a paying user stays Pro offline); with no answer yet, a
+// failure means free.
+const PRO_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+// After a failed refresh, the next one waits this long.
+const PRO_RETRY_MS = 5 * 60 * 1000;
+// With nothing cached, a Pro check waits this long for ExtPay, then answers
+// free; the late answer is still cached.
+const PRO_FIRST_WAIT_MS = 3000;
+
+// `cache` when it is a well-formed { isPro, checkedAt }, else null.
+function validProCache(cache) {
+  if (!cache || typeof cache !== 'object') return null;
+  if (typeof cache.isPro !== 'boolean' || !Number.isFinite(cache.checkedAt)) return null;
+  return cache;
+}
+
+// Pure. What a Pro check does with `cache` at `now`; no refresh starts
+// before `retryAt` (set after a failed one):
+//   fresh cache -> { isPro: cached, refresh: false, wait: false }
+//   stale cache -> { isPro: cached, refresh: true,  wait: false }  answer now, refresh in the background
+//   no cache    -> { isPro: false,  refresh: true,  wait: true }   wait for the first answer
+function proCacheDecision(cache, now, retryAt) {
+  const valid = validProCache(cache);
+  const canRefresh = now >= (retryAt || 0);
+  if (!valid) return { isPro: false, refresh: canRefresh, wait: canRefresh };
+  const age = now - valid.checkedAt;
+  const fresh = age >= 0 && age < PRO_CACHE_TTL_MS;
+  return { isPro: valid.isPro, refresh: !fresh && canRefresh, wait: false };
+}
+
+// Pure. The cache after a refresh: `paid` is ExtPay's answer (true/false),
+// or null when the refresh failed, which keeps the last known cache (null
+// when there is none, which reads as free).
+function proCacheAfterRefresh(cache, paid, now) {
+  if (paid === true || paid === false) return { isPro: paid, checkedAt: now };
+  return validProCache(cache);
+}
+
+let proCache;             // { isPro, checkedAt } or null; undefined until read from storage
+let proCacheRead = null;  // reads proCache from storage, once per service worker
+let proRefresh = null;    // the refresh in flight (resolves to isPro)
+let proRetryAt = 0;       // no refresh before this time
+let proCacheVersion = 0;  // bumped on every cache write
+
+function readProCache() {
+  if (!proCacheRead) {
+    proCacheRead = chrome.storage.local.get('proStatusCache')
+      .then(data => data.proStatusCache, () => null)
+      .then(stored => { if (proCache === undefined) proCache = validProCache(stored); });
+  }
+  return proCacheRead;
+}
+
+async function writeProCache(cache) {
+  proCache = cache;
+  proCacheVersion++;
   try {
-    if (!extpay) return false;
-    const user = await extpay.getUser();
-    return user?.paid === true;
+    await chrome.storage.local.set({ proStatusCache: cache });
   } catch (e) {
-    return false;
+    console.warn('CleanFeed: could not save Pro status:', e);
   }
 }
+
+// Asks ExtPay now (one request at a time) and caches the answer.
+function refreshProStatus() {
+  if (!proRefresh) {
+    proRefresh = (async () => {
+      await readProCache();
+      const version = proCacheVersion;
+      let paid = null;
+      try {
+        if (extpay) paid = (await extpay.getUser())?.paid === true;
+      } catch (e) {
+        console.warn('CleanFeed: Pro status check failed, keeping the last known one:', e);
+      }
+      if (paid === null) proRetryAt = Date.now() + PRO_RETRY_MS;
+      // A cache written meanwhile (onPaid) is newer than this answer
+      else if (version === proCacheVersion) await writeProCache(proCacheAfterRefresh(proCache, paid, Date.now()));
+      return proCache ? proCache.isPro : false;
+    })().finally(() => { proRefresh = null; });
+  }
+  return proRefresh;
+}
+
+// Resolves to `promise`'s value, or to `fallback` after `ms`.
+function withTimeout(promise, ms, fallback) {
+  let timer;
+  const timeout = new Promise(resolve => { timer = setTimeout(() => resolve(fallback), ms); });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+// Pro status for a request: the cached answer, refreshed in the background
+// when stale. Only with nothing cached does it wait (briefly) for ExtPay.
+async function checkProStatus() {
+  await readProCache();
+  const decision = proCacheDecision(proCache, Date.now(), proRetryAt);
+  if (!decision.refresh) return decision.isPro;
+  const refresh = refreshProStatus();
+  return decision.wait ? withTimeout(refresh, PRO_FIRST_WAIT_MS, false) : decision.isPro;
+}
+
+try {
+  if (extpay && extpay.onPaid) {
+    extpay.onPaid.addListener(user => {
+      writeProCache({ isPro: typeof user?.paid === 'boolean' ? user.paid : true, checkedAt: Date.now() });
+    });
+  }
+} catch (e) {
+  console.warn('CleanFeed: ExtensionPay onPaid listener failed:', e);
+}
+
+// Service worker start
+refreshProStatus();
 
 // --- Install / Update ---
 
@@ -234,9 +344,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   return true;
 });
 
+// Only the cases that need Pro status ask for it (checkProStatus).
 async function handleMessage(request) {
-  const isPro = await checkProStatus();
-
   const refusal = await strictModeRefusal(request);
   if (refusal) return refusal;
 
@@ -263,7 +372,7 @@ async function handleMessage(request) {
 
     // --- Keyword Blocking ---
     case 'addKeyword': {
-      if (!isPro) {
+      if (!(await checkProStatus())) {
         const keywords = await Storage.getBlockedKeywords();
         if (keywords.length >= Storage.FREE_KEYWORD_LIMIT) {
           return { success: false, reason: 'free_limit' };
@@ -341,6 +450,7 @@ async function handleMessage(request) {
     case 'bulkAddBlockingTerms': {
       const items = Array.isArray(request.items) ? request.items : [];
       let addedKw = 0, addedSyn = 0, skippedFree = 0, duplicates = 0;
+      const isPro = await checkProStatus();
 
       const keywords = await Storage.getBlockedKeywords();
       const customs = await Storage.getCustomSynonyms();
@@ -383,6 +493,8 @@ async function handleMessage(request) {
     // --- Preset Profiles ---
     // Bulk-add a curated set of category keys as blocked keywords in one
     // storage write. Categories already blocked are silently skipped.
+    // On Free, a preset that would go past the cap adds nothing and reports
+    // how many topics it adds against the free slots.
     case 'applyPreset': {
       const keys = Array.isArray(request.categoryKeys) ? request.categoryKeys : [];
       if (keys.length === 0) return { success: false, error: 'empty_preset' };
@@ -392,8 +504,9 @@ async function handleMessage(request) {
       const toAdd = keys.filter(k => !existingSet.has(k.toLowerCase()));
 
       // Check free limit
-      if (!isPro && (existing.length + toAdd.length) > Storage.FREE_KEYWORD_LIMIT) {
-        return { success: false, reason: 'free_limit', wouldAdd: toAdd.length, currentCount: existing.length };
+      const limit = Storage.FREE_KEYWORD_LIMIT;
+      if (toAdd.length > 0 && existing.length + toAdd.length > limit && !(await checkProStatus())) {
+        return { success: false, reason: 'free_limit', wouldAdd: toAdd.length, currentCount: existing.length, limit };
       }
 
       let added = 0;
@@ -426,7 +539,7 @@ async function handleMessage(request) {
 
     // --- Subscription Exception ---
     case 'whitelistChannel': {
-      if (!isPro) return { success: false, reason: 'pro_only' };
+      if (!(await checkProStatus())) return { success: false, reason: 'pro_only' };
       await Storage.addWhitelistedChannel(request.name, request.id, request.exemptFrom);
       return { success: true };
     }
@@ -440,6 +553,7 @@ async function handleMessage(request) {
     case 'checkInterest': {
       // Interest Boundaries hidden (features.js): never prompt, never count.
       if (!CF_FEATURES.interestBoundaries) return { shouldPrompt: false };
+      const isPro = await checkProStatus();
       const onboarding = await Storage.getOnboarding();
 
       const shouldCheck = isPro
@@ -510,6 +624,7 @@ async function handleMessage(request) {
       const interests = await Storage.getInterests();
       const hiddenVideos = await Storage.getHiddenVideos();
       const onboarding = await Storage.getOnboarding();
+      const isPro = await checkProStatus();
 
       return {
         settings, stats, blockedChannels, blockedKeywords,
@@ -617,7 +732,7 @@ async function handleMessage(request) {
     // current one) and needs no Pro, nor does disabling it.
     case 'setStrictPassword': {
       const settings = await Storage.getSettings();
-      if (!settings.strictModeEnabled && !isPro) return { error: 'pro_only' };
+      if (!settings.strictModeEnabled && !(await checkProStatus())) return { error: 'pro_only' };
       const hash = await Storage.hashPassword(request.password || '');
       settings.strictModePasswordHash = hash;
       settings.strictModeEnabled = true;

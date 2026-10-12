@@ -756,6 +756,12 @@ body {
   gap: 10px;
   margin-top: 12px;
 }
+.presets-notice {
+  margin-top: 12px;
+}
+.presets-notice[hidden] {
+  display: none;
+}
 .preset-card {
   display: flex;
   align-items: center;
