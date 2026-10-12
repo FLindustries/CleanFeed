@@ -456,7 +456,9 @@
     }
     // Stale per-page caches that should NOT survive SPA navigation
     lastClickedVideoCard = null;
-    promptedSubscriptionExceptions.clear();
+    // The blocked-channel banner and hidden content belong to the page we
+    // just left; filterPage() below re-applies them if this page is blocked.
+    clearBlockedChannelPage();
     // Bound loggedVideos to prevent unbounded growth across long sessions
     if (loggedVideos.size > 500) loggedVideos.clear();
 
@@ -476,6 +478,34 @@
     injectSubscriptionsToggle();
     applyRelevantSectionVisibility();
     interceptSearch();
+  }
+
+  // Undoes the blocked-channel page state set by hideBlockedContent(): shows
+  // the hidden page content again and removes the banner.
+  function clearBlockedChannelPage() {
+    document.querySelectorAll('[data-cf-blocked]').forEach((el) => {
+      delete el.dataset.cfBlocked;
+      el.classList.remove('cleanfeed-hidden');
+    });
+    const blockedMsg = document.getElementById('cf-channel-blocked-msg');
+    if (blockedMsg) blockedMsg.remove();
+  }
+
+  // Clears a blocked-channel page state that does not match the page on screen.
+  // YouTube fires yt-navigate-finish BEFORE it swaps the visible page, so the
+  // pass right after onNavigate() can block the page being left; the next pass
+  // (mutation observer) undoes it here. `content` / `channelKey`: the content
+  // element of the blocked channel page on screen and its lowercase name (null
+  // and '' when the page on screen is not a blocked channel page). The state is
+  // consistent when the only marked element is `content` (marked for
+  // `channelKey`) and the banner exists exactly when something is marked.
+  // Makes no DOM change when the state is already consistent.
+  function clearStaleBlockedChannelPage(content, channelKey) {
+    const marked = Array.from(document.querySelectorAll('[data-cf-blocked]'));
+    const hasBanner = !!document.getElementById('cf-channel-blocked-msg');
+    const stale = marked.some(el => el !== content || el.dataset.cfBlocked !== channelKey) ||
+                  (marked.length > 0) !== hasBanner;
+    if (stale) clearBlockedChannelPage();
   }
 
   // ── Storage Change Listener ───────────────────────────────────────────
@@ -813,6 +843,7 @@
     } // end: blockedChannelNames/Handles gate
 
     // If we're on a blocked channel's page, hide ALL their content
+    let onBlockedChannelPage = false;
     if (YT.isChannelPage()) {
       const pageChannel = YT.getPageChannelName();
       const pageChannelLower = pageChannel ? pageChannel.toLowerCase() : '';
@@ -824,10 +855,13 @@
                      (pageHandleLower && peekedChannels.has(pageHandleLower));
 
       if (pageChannel && blockedChannelNames.has(pageChannelLower) && !peeked) {
-        // Hide the entire page content section
-        const content = document.querySelector('ytd-two-column-browse-results-renderer, #contents.ytd-section-list-renderer, ytd-browse #content');
+        onBlockedChannelPage = true;
+        // Hide the entire page content section. Only the visible page: Home's
+        // and other cached pages' grids stay in the DOM, hidden.
+        const content = YT.getActivePageRoot().querySelector('ytd-two-column-browse-results-renderer, #contents.ytd-section-list-renderer, ytd-browse #content');
+        clearStaleBlockedChannelPage(content, pageChannelLower);
         if (content && !content.dataset.cfBlocked) {
-          content.dataset.cfBlocked = 'true';
+          content.dataset.cfBlocked = pageChannelLower;
           content.classList.add('cleanfeed-hidden');
           // Show a message that this channel is blocked, with a peek button
           if (!document.getElementById('cf-channel-blocked-msg')) {
@@ -850,12 +884,15 @@
                 ? msg('channelBlockedByCleanFeed') : 'This channel is blocked by CleanFeed' }),
               peekBtn
             ]);
-            const pageManager = document.querySelector('ytd-page-manager, #page-manager');
-            if (pageManager) pageManager.prepend(msg_el);
+            // Inside the blocked page, where its content was: YouTube hides
+            // the banner together with the page when the user navigates away.
+            content.before(msg_el);
           }
         }
       }
     }
+    // Not on a blocked channel's page (any more): undo a leftover block
+    if (!onBlockedChannelPage) clearStaleBlockedChannelPage(null, '');
 
     // Extra sweep for sidebar: YouTube 2025-2026 sidebar uses yt-lockup-metadata-view-model
     // which is NOT in VIDEO_CARDS. Find ALL #video-title in the sidebar and process them.
@@ -955,9 +992,15 @@
     scheduleSubscriptionCheck();
   }
 
-  // Track which keyword-blocked channels we've already prompted about
+  // keyword + channel pairs already shown in the subscriptions toast. Kept for
+  // the whole tab session (never cleared on SPA navigation), so the toast
+  // never repeats for the same pair.
   const promptedSubscriptionExceptions = new Set();
   let subCheckTimer = null;
+
+  function subscriptionPromptKey(keyword, channelName) {
+    return String(keyword).toLowerCase() + '\n' + String(channelName).toLowerCase();
+  }
 
   function scheduleSubscriptionCheck() {
     if (subCheckTimer) return; // already scheduled
@@ -992,19 +1035,20 @@
 
     if (subscribedNames.size === 0) return;
 
+    // Only the visible page: cached pages keep their hidden cards in the DOM
+    const pageRoot = YT.getActivePageRoot();
     // For each keyword, find subscribed channels that were hidden
     for (const kw of blockedKeywords) {
       const keyword = kw.keyword;
-      const promptKey = keyword;
-      if (promptedSubscriptionExceptions.has(promptKey)) continue;
 
       const affectedChannels = [];
-      const cards = document.querySelectorAll(YT.VIDEO_CARDS + '.cleanfeed-hidden');
+      const cards = pageRoot.querySelectorAll(YT.VIDEO_CARDS + '.cleanfeed-hidden');
       for (const card of cards) {
         const channelName = YT.getChannelName(card);
         if (!channelName) continue;
         if (!subscribedNames.has(channelName.toLowerCase())) continue;
         if (isWhitelisted(channelName, keyword)) continue;
+        if (promptedSubscriptionExceptions.has(subscriptionPromptKey(keyword, channelName))) continue;
 
         // This card was hidden by this keyword and the channel is subscribed
         const title = YT.getVideoTitle(card) || '';
@@ -1021,7 +1065,9 @@
       }
 
       if (affectedChannels.length > 0) {
-        promptedSubscriptionExceptions.add(promptKey);
+        for (const ch of affectedChannels) {
+          promptedSubscriptionExceptions.add(subscriptionPromptKey(keyword, ch.name));
+        }
         showSubscriptionExceptionToast(affectedChannels, keyword);
         break; // Only show one toast at a time
       }

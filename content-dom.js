@@ -134,7 +134,25 @@ const YT = {
     return '';
   },
 
+  // YouTube keeps pages visited earlier in the tab inside ytd-page-manager,
+  // hidden with the `hidden` attribute (e.g. ytd-watch-flexy[hidden] while a
+  // channel's ytd-browse is shown). Page-level lookups must search only the
+  // page on screen. Returns that page element, or `document` when there is no
+  // page manager or no visible page in it.
+  getActivePageRoot() {
+    const manager = document.querySelector('ytd-page-manager');
+    if (manager) {
+      for (const page of manager.children) {
+        // Pages are ytd-* elements (ytd-browse, ytd-watch-flexy, ytd-search...);
+        // skip anything else that ends up in the manager.
+        if (page.tagName.startsWith('YTD-') && !page.hasAttribute('hidden')) return page;
+      }
+    }
+    return document;
+  },
+
   getPageChannelName() {
+    const root = YT.getActivePageRoot();
     // On channel pages, extract from URL as fallback
     const selectors = [
       'ytd-video-owner-renderer a[href^="/@"]',
@@ -150,7 +168,7 @@ const YT = {
       'ytd-c4-tabbed-header-renderer ytd-channel-name yt-formatted-string',
     ];
     for (const sel of selectors) {
-      const el = document.querySelector(sel);
+      const el = root.querySelector(sel);
       if (el) {
         const text = el.textContent.trim();
         if (text) return text;
@@ -163,7 +181,7 @@ const YT = {
   },
 
   getPageChannelId() {
-    const link = document.querySelector(
+    const link = YT.getActivePageRoot().querySelector(
       'ytd-video-owner-renderer a[href^="/@"], #channel-header a[href^="/@"], ytd-c4-tabbed-header-renderer a[href^="/@"]'
     );
     const href = link?.getAttribute('href') || '';
@@ -180,8 +198,15 @@ const YT = {
   isChannelPage() {
     // URL-based check
     if (/^\/@|^\/channel\/|^\/c\/|^\/user\//.test(window.location.pathname)) return true;
-    // DOM-based check (YouTube sometimes redirects /@name to /name)
-    if (document.querySelector('ytd-c4-tabbed-header-renderer, #channel-header, ytd-browse[page-subtype="channels"]')) return true;
+    // DOM-based check (YouTube sometimes redirects /@name to /name). Only a
+    // visible channel page or header counts: hidden cached pages stay in the
+    // DOM, so a document-wide match stayed true on Home after any channel.
+    const channelDom = 'ytd-browse[page-subtype="channels"], ytd-c4-tabbed-header-renderer, #channel-header';
+    const root = YT.getActivePageRoot();
+    if (root !== document && root.matches(channelDom)) return true;
+    for (const el of root.querySelectorAll(channelDom)) {
+      if (!el.closest('[hidden]')) return true;
+    }
     return false;
   },
 

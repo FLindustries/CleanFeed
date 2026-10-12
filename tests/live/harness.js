@@ -465,6 +465,58 @@ async function waitForFilter(page, opts) {
   await sleep(settleMs);
 }
 
+// ── Content-script world ─────────────────────────────────────────────────
+
+// page.evaluate runs in the page's main world, which cannot see the content
+// script's globals (YT, cfEl, ...). This evaluates expressions inside
+// CleanFeed's own isolated world in the page's main frame, through CDP.
+//   const cs = await h.attachContentWorld(page);   // once per page
+//   const name = await cs.evaluate('YT.getPageChannelName()');
+// The result must be JSON-serializable. Survives SPA and full navigations
+// (it always uses the newest CleanFeed world of the main frame).
+async function attachContentWorld(page) {
+  const origin = `chrome-extension://${getExtensionId()}`;
+  const cdp = await withTimeout(requireContext().newCDPSession(page), CALL_TIMEOUT_MS, 'newCDPSession');
+  const tree = await withTimeout(cdp.send('Page.getFrameTree'), CALL_TIMEOUT_MS, 'Page.getFrameTree');
+  const mainFrameId = tree.frameTree.frame.id;
+  const worlds = new Map(); // execution context id -> created order
+  let created = 0;
+  cdp.on('Runtime.executionContextCreated', ({ context }) => {
+    const aux = context.auxData || {};
+    if (context.origin === origin && aux.type === 'isolated' && aux.frameId === mainFrameId) {
+      worlds.set(context.id, ++created);
+    }
+  });
+  cdp.on('Runtime.executionContextDestroyed', ({ executionContextId }) => worlds.delete(executionContextId));
+  cdp.on('Runtime.executionContextsCleared', () => worlds.clear());
+  await withTimeout(cdp.send('Runtime.enable'), CALL_TIMEOUT_MS, 'Runtime.enable');
+
+  async function evaluate(expression, ms) {
+    const limit = ms || CALL_TIMEOUT_MS;
+    const deadline = Date.now() + limit;
+    while (worlds.size === 0) {
+      if (Date.now() > deadline) throw new Error('CleanFeed content-script world not found in the main frame');
+      await sleep(200);
+    }
+    const contextId = [...worlds.entries()].sort((a, b) => b[1] - a[1])[0][0];
+    const res = await withTimeout(
+      cdp.send('Runtime.evaluate', { expression, contextId, returnByValue: true, awaitPromise: true }),
+      limit,
+      `content-world evaluate: ${expression.slice(0, 60)}`
+    );
+    if (res.exceptionDetails) {
+      const ex = res.exceptionDetails.exception;
+      throw new Error(`content-world evaluate threw: ${(ex && ex.description) || res.exceptionDetails.text}`);
+    }
+    return res.result.value;
+  }
+
+  return {
+    evaluate,
+    detach: () => withTimeout(cdp.detach(), CALL_TIMEOUT_MS, 'CDP detach').catch(() => {})
+  };
+}
+
 // ── Shutdown ─────────────────────────────────────────────────────────────
 
 async function close() {
@@ -503,6 +555,7 @@ module.exports = {
   gotoYouTube,
   rejectConsentIfShown,
   waitForFilter,
+  attachContentWorld,
   close,
   isHeadless: () => state.headless
 };
