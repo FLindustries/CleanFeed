@@ -245,6 +245,30 @@ const YT = {
   }
 };
 
+// --- 3-dot menu injection decision ---
+
+// CleanFeed items are added only to a popup that opens within this many ms of
+// a menu-button click inside a video card.
+const MENU_CLICK_WINDOW_MS = 1000;
+
+// Decides what content.js injectBlockOption() does with an open menu popup.
+//   itemTokens: data-cf-menu-token of every CleanFeed item/separator already in
+//               the popup ([] if none; '' for an item without a token)
+//   clickToken: token of the last menu-button click inside a video card, ''
+//               when the last menu-button click was outside any card
+//   clickAgeMs: ms since that click
+// Returns 'keep' (the items were built for this click: change nothing),
+// 'inject', 'replace' (remove stale items, then inject), 'clear' (remove stale
+// items, inject nothing) or 'none'. 'keep' never mutates the DOM, so a repeat
+// call (e.g. from the observer reacting to our own insertions) is a no-op.
+function getMenuInjectionAction(itemTokens, clickToken, clickAgeMs) {
+  const hasItems = itemTokens.length > 0;
+  if (hasItems && clickToken && itemTokens.every(t => t === clickToken)) return 'keep';
+  const fresh = !!clickToken && clickAgeMs >= 0 && clickAgeMs <= MENU_CLICK_WINDOW_MS;
+  if (fresh) return hasItems ? 'replace' : 'inject';
+  return hasItems ? 'clear' : 'none';
+}
+
 // --- Keyword Matching ---
 
 function matchesKeyword(text, keyword) {

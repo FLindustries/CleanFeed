@@ -31,6 +31,11 @@
   let debounceTimer = null;
   let observer = null;
   let lastClickedVideoCard = null;
+  // Last menu-button click: when, and a token unique to that click inside a
+  // card ('' when the click was outside any card). See injectBlockOption.
+  let lastMenuClickAt = 0;
+  let lastMenuClickToken = '';
+  let menuClickSeq = 0;
   // searchIntercepted — now tracked via data-cf-search-intercepted on the input element
   let activeJustNowQueries = new Set();
   const loggedVideos = new Set(); // dedup: track title+channel combos already logged
@@ -1259,10 +1264,11 @@
         );
         if (!menuTrigger) return;
 
-        const videoCard = menuTrigger.closest(YT.VIDEO_CARDS);
-        if (videoCard) {
-          lastClickedVideoCard = videoCard;
-        }
+        // Set on EVERY menu-button click: a menu opened outside any card (e.g.
+        // under the main video) must not inherit an earlier card's channel.
+        lastClickedVideoCard = menuTrigger.closest(YT.VIDEO_CARDS);
+        lastMenuClickAt = Date.now();
+        lastMenuClickToken = lastClickedVideoCard ? String(++menuClickSeq) : '';
       },
       true
     );
@@ -1418,45 +1424,51 @@
   // ── Menu Popup Detection ──────────────────────────────────────────────
 
   function watchForMenuPopup() {
-    const menuObserver = new MutationObserver(() => {
-      const popup = YT.getMenuPopup();
-      if (popup) {
-        injectBlockOption(popup);
-      }
-    });
-
     // PERF: scope to the popup container instead of document.body. Previously
     // this fired on virtually every YouTube interaction (focus, hover, every
     // class change anywhere in the DOM tree), running getMenuPopup() each time.
     // ytd-popup-container is the only place menu popups actually appear.
     const target = document.querySelector('ytd-popup-container') || document.body;
-    menuObserver.observe(target, {
+    const observeOptions = {
       childList: true,
       subtree: true,
       attributes: true,
       attributeFilter: ['style', 'focused_', 'aria-hidden', 'class', 'opened', 'aria-expanded'],
+    };
+
+    const menuObserver = new MutationObserver(() => {
+      const popup = YT.getMenuPopup();
+      if (!popup) return;
+      // Stop observing while we edit the popup: our own insertions/removals
+      // must never re-trigger this callback (that loop froze the tab).
+      menuObserver.disconnect();
+      try {
+        injectBlockOption(popup);
+      } finally {
+        menuObserver.observe(target, observeOptions);
+      }
     });
+
+    menuObserver.observe(target, observeOptions);
   }
 
   // ── Inject "Block Channel" into Video Menu ────────────────────────────
 
   function injectBlockOption(popup) {
-    // Get channel info from tracked video card FIRST (eager resolution)
-    if (!lastClickedVideoCard) return;
-
-    const channelName = YT.getChannelName(lastClickedVideoCard);
-    const channelId = YT.getChannelId(lastClickedVideoCard);
-    const videoTitle = YT.getVideoTitle(lastClickedVideoCard);
-    const videoCard = lastClickedVideoCard;
-
-    // Check if the existing menu item already has the correct channel
-    const existingItem = popup.querySelector('.cleanfeed-menu-item');
-    if (existingItem && existingItem.dataset.cfChannel === channelName) return;
-
-    // Remove old items if channel changed
-    if (existingItem) {
-      popup.querySelectorAll('.cleanfeed-menu-item, .cleanfeed-menu-separator').forEach(el => el.remove());
-    }
+    // Every item we add carries the token of the click it was built for, so a
+    // repeat call for the same click changes nothing, also for cards without a
+    // channel name (topic item only). Items are added only to a popup opened
+    // shortly after a click inside a card; stale ones are removed.
+    const existing = popup.querySelectorAll('.cleanfeed-menu-item, .cleanfeed-menu-separator');
+    const clickToken = lastClickedVideoCard ? lastMenuClickToken : '';
+    const action = getMenuInjectionAction(
+      Array.from(existing, el => el.dataset.cfMenuToken || ''),
+      clickToken,
+      Date.now() - lastMenuClickAt
+    );
+    if (action === 'keep' || action === 'none') return;
+    existing.forEach(el => el.remove()); // 'replace' / 'clear': drop stale items
+    if (action === 'clear') return;
 
     const listbox = YT.getMenuListbox(popup);
     if (!listbox) return;
@@ -1466,6 +1478,10 @@
 
     if (items.length < 2) return;
 
+    const videoCard = lastClickedVideoCard;
+    const channelName = YT.getChannelName(videoCard);
+    const channelId = YT.getChannelId(videoCard);
+    const videoTitle = YT.getVideoTitle(videoCard);
     const detectedCategory = detectTopicFromTitle(videoTitle);
 
     // Find "don't recommend" item for insertion point
@@ -1485,6 +1501,7 @@
     let lastInserted = insertAfter;
 
     function insertItem(element) {
+      element.dataset.cfMenuToken = clickToken;
       if (lastInserted && lastInserted.nextSibling) {
         listbox.insertBefore(element, lastInserted.nextSibling);
       } else {
