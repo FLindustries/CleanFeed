@@ -49,8 +49,24 @@ function isValidChannelName(text) {
 
 // --- YouTube 2025 Selectors ---
 
+// Shorts items outside the /shorts player (search-result Shorts shelves, a
+// channel's Shorts shelf). YouTube renders each one as
+// ytm-shorts-lockup-view-model inside a ytm-shorts-lockup-view-model-v2
+// wrapper (observed 2026-10-12): title in h3, links to /shorts/<id>, usually
+// no channel. Only one element of the pair matches, so every Short is checked
+// and counted once; the inner element matches only when it has no wrapper.
+// Neither matches inside ytd-rich-item-renderer (a channel's Shorts tab, the
+// Home Shorts shelf): that is already a card, and a second, nested card would
+// be counted twice and make "Skip" hide only the inner part of the grid cell.
+const CF_SHORTS_CARDS =
+  'ytm-shorts-lockup-view-model-v2:not(ytd-rich-item-renderer *), ' +
+  ':not(ytm-shorts-lockup-view-model-v2) > ytm-shorts-lockup-view-model:not(ytd-rich-item-renderer *)';
+
 const YT = {
-  VIDEO_CARDS: 'ytd-video-renderer, ytd-grid-video-renderer, ytd-rich-item-renderer, ytd-compact-video-renderer, ytd-playlist-video-renderer, ytd-playlist-renderer, ytd-reel-item-renderer, yt-lockup-view-model',
+  // yt-lockup-view-model must stay last: checkSubscriptionExceptions() appends
+  // '.cleanfeed-hidden' to this string, which applies to the last entry only.
+  VIDEO_CARDS: 'ytd-video-renderer, ytd-grid-video-renderer, ytd-rich-item-renderer, ytd-compact-video-renderer, ytd-playlist-video-renderer, ytd-playlist-renderer, ytd-reel-item-renderer, ' + CF_SHORTS_CARDS + ', yt-lockup-view-model',
+  SHORTS_CARDS: CF_SHORTS_CARDS,
 
   getChannelName(videoCard) {
     // Try ALL /@handle links — the first may be the avatar (no text)
@@ -96,6 +112,8 @@ const YT = {
 
   getVideoTitle(videoCard) {
     const selectors = [
+      // /shorts player (ytd-reel-video-renderer); no other card contains it
+      'yt-shorts-video-title-view-model',
       '#video-title',
       '#video-title-link',
       'h3 a',
@@ -149,6 +167,18 @@ const YT = {
       }
     }
     return document;
+  },
+
+  // The /shorts player shows the current short in a ytd-reel-video-renderer.
+  // YouTube keeps ONE renderer and swaps its title, channel link and video on
+  // every scroll (observed 2026-10-12), so callers must re-check it whenever
+  // what it shows changes. Older layouts kept one renderer per short and
+  // marked the current one [is-active]. Returns null outside /shorts/.
+  getShortsPlayerReel() {
+    if (!window.location.pathname.startsWith('/shorts/')) return null;
+    const root = YT.getActivePageRoot();
+    return root.querySelector('ytd-reel-video-renderer[is-active]') ||
+           root.querySelector('ytd-reel-video-renderer');
   },
 
   getPageChannelName() {

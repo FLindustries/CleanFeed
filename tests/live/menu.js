@@ -6,9 +6,11 @@
 // the 3-dot menu of card 1, close it, open the menu of card 2, then click
 // CleanFeed's "Not interested in this topic" item. Shorts-tab cards (and some
 // Videos-tab cards) have no detectable channel name: that used to freeze the tab.
-// Outside-a-card scenario (#35): on the search page open a video card's menu,
+// Shorts shelf scenario (#35): on the search page open a video card's menu,
 // close it, then open a Shorts shelf item's menu; it must not offer CleanFeed
-// items for the earlier card. (The logged-out watch-page "More actions" menu has
+// items for the earlier card. Shorts shelf items were outside any card when
+// this was written; since finding #12 they are cards themselves, so their menu
+// gets items for the Short. (The logged-out watch-page "More actions" menu has
 // a single item, which CleanFeed never extends, so it cannot show this bug.)
 // Every opened card menu must: keep the tab responsive (page.evaluate(() => 1)
 // answers within 3 s, repeatedly over ~5 s); hold exactly one set of CleanFeed
@@ -292,9 +294,9 @@ async function cardMenuScenario(name, url) {
 }
 
 // Opens a video card's menu, closes it, then opens the menu of a search-result
-// Shorts shelf item (not a CleanFeed video card at the time of writing). That
-// menu must not offer CleanFeed items for the previously clicked card: either
-// no items, or items whose topic panel names the Short itself.
+// Shorts shelf item (a CleanFeed card since finding #12). That menu must not
+// offer CleanFeed items for the previously clicked card: either no items, or
+// items whose topic panel names the Short itself.
 async function shortsShelfScenario() {
   const result = { name: 'search results: Shorts shelf menu after a video card menu', url: SEARCH_URL, pass: false, reasons: [] };
   try {

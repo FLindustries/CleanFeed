@@ -610,6 +610,7 @@
       });
       const blockedMsg = document.getElementById('cf-channel-blocked-msg');
       if (blockedMsg) blockedMsg.remove();
+      syncShortsPlayback();
       return;
     }
 
@@ -638,15 +639,51 @@
       document.body.classList.remove('cleanfeed-hide-comments');
     }
     hideBlockedContent();
+    syncShortsPlayback();
     // Note: updateBlockedChannelPreHideStyles() runs in applyState() when
     // blocked lists change — no need to rebuild CSS rules on every filter pass.
+  }
+
+  // /shorts player: a hidden short would keep playing (with sound) behind the
+  // empty space, so it is paused. YouTube then treats the player as paused by
+  // the user and does not start the following shorts, so playback resumes once
+  // the player shows a short that is not hidden, but only when CleanFeed was
+  // the one that paused it.
+  function syncShortsPlayback() {
+    const reel = YT.getShortsPlayerReel();
+    const video = reel && reel.querySelector('video');
+    if (!video) return;
+    if (reel.classList.contains('cleanfeed-hidden')) {
+      if (!video.paused) {
+        video.pause();
+        reel.dataset.cfPausedVideo = 'true';
+      }
+    } else if (reel.dataset.cfPausedVideo) {
+      delete reel.dataset.cfPausedVideo;
+      video.play().catch(() => {});
+    }
   }
 
   function hideBlockedContent() {
     // Nothing to filter — skip all DOM queries
     if (blockedChannelNames.size === 0 && blockedChannelHandles.size === 0 && blockedKeywords.length === 0) return;
 
-    const cards = document.querySelectorAll(YT.VIDEO_CARDS);
+    const cards = Array.from(document.querySelectorAll(YT.VIDEO_CARDS));
+    // /shorts player: the short on screen is checked like a card. YouTube
+    // reuses one renderer for every short, so it is checked again whenever the
+    // title or channel it shows changes (the channel link loads later).
+    const shortsReel = YT.getShortsPlayerReel();
+    if (shortsReel) {
+      const reelChannelLink = shortsReel.querySelector('a[href^="/@"]');
+      const reelKey = (YT.getVideoTitle(shortsReel) || '') + '\n' +
+        (reelChannelLink ? reelChannelLink.getAttribute('href') : '');
+      if (shortsReel.dataset.cfReelKey !== reelKey) {
+        shortsReel.dataset.cfReelKey = reelKey;
+        shortsReel.classList.remove('cleanfeed-hidden');
+        delete shortsReel.dataset.cfChecked;
+      }
+      cards.push(shortsReel);
+    }
     let newCards = 0;
 
     for (const card of cards) {
@@ -831,6 +868,7 @@
         const container = link.closest(
           'ytd-video-renderer, ytd-grid-video-renderer, ytd-rich-item-renderer, ' +
           'ytd-compact-video-renderer, ytd-reel-item-renderer, ytd-channel-renderer, ' +
+          YT.SHORTS_CARDS + ', ytd-reel-video-renderer, ' +
           'ytd-shelf-renderer, ytd-reel-shelf-renderer, ytd-horizontal-card-list-renderer, ' +
           'ytd-playlist-renderer'
         );
@@ -841,6 +879,15 @@
     }
 
     } // end: blockedChannelNames/Handles gate
+
+    // A search-result Shorts shelf whose items are all hidden would show only
+    // its header: hide it too, and show it again once one of its items is visible.
+    for (const shelf of document.querySelectorAll('grid-shelf-view-model')) {
+      const items = shelf.querySelectorAll(YT.SHORTS_CARDS);
+      if (items.length === 0) continue;
+      const allHidden = Array.from(items).every(item => item.classList.contains('cleanfeed-hidden'));
+      shelf.classList.toggle('cleanfeed-hidden', allHidden);
+    }
 
     // If we're on a blocked channel's page, hide ALL their content
     let onBlockedChannelPage = false;

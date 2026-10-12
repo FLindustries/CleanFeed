@@ -34,6 +34,16 @@ html[dark] {
 .cleanfeed-hidden {
   display: none !important;
 }
+/* Search-result Shorts shelf: each Short sits in its own grid cell. Collapse
+   the cell of a hidden Short so it leaves no empty hole in the row. */
+body:not(.cleanfeed-paused) .ytGridShelfViewModelGridShelfItem:has(> .cleanfeed-hidden) {
+  display: none !important;
+}
+/* /shorts player: the slot that holds the hidden short's renderer also shows a
+   still frame of that short next to #reel-overlay-container. Hide it too. */
+body:not(.cleanfeed-paused) ytd-shorts :has(> #reel-overlay-container > ytd-reel-video-renderer.cleanfeed-hidden) > :not(#reel-overlay-container) {
+  visibility: hidden !important;
+}
 
 /* --- Pause mode: show everything on the current page --- */
 /* User can toggle CleanFeed off for the current page only via the floating
@@ -597,7 +607,9 @@ ytd-video-renderer,
 ytd-rich-item-renderer,
 ytd-grid-video-renderer,
 ytd-compact-video-renderer,
-yt-lockup-view-model {
+yt-lockup-view-model,
+ytm-shorts-lockup-view-model-v2,
+:not(ytm-shorts-lockup-view-model-v2) > ytm-shorts-lockup-view-model {
   position: relative;
 }
 .cleanfeed-quickadd-btn {
@@ -632,7 +644,9 @@ ytd-video-renderer:hover .cleanfeed-quickadd-btn,
 ytd-rich-item-renderer:hover .cleanfeed-quickadd-btn,
 ytd-grid-video-renderer:hover .cleanfeed-quickadd-btn,
 ytd-compact-video-renderer:hover .cleanfeed-quickadd-btn,
-yt-lockup-view-model:hover .cleanfeed-quickadd-btn {
+yt-lockup-view-model:hover .cleanfeed-quickadd-btn,
+ytm-shorts-lockup-view-model-v2:hover .cleanfeed-quickadd-btn,
+:not(ytm-shorts-lockup-view-model-v2) > ytm-shorts-lockup-view-model:hover .cleanfeed-quickadd-btn {
   opacity: 1;
 }
 
