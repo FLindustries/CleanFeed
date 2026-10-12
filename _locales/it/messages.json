@@ -12,7 +12,7 @@
   "strictLockedTitle": { "message": "Bloccato dalla modalità rigorosa" },
   "strictLockedToast": { "message": "Bloccato dalla modalità rigorosa. Per cambiarlo, disattiva la modalità rigorosa nelle Impostazioni di CleanFeed." },
   "extensionName": { "message": "CleanFeed per YouTube: blocca canali e parole chiave, nascondi Shorts" },
-  "extensionDescription": { "message": "Nascondi video di canali bloccati, filtra i titoli per parola chiave o 35 argomenti e rimuovi gli Shorts. Senza account né tracking." },
+  "extensionDescription": { "message": "Nascondi i video dei canali bloccati, filtra i titoli per parola o 35 argomenti, togli gli Shorts. Niente account né tracciamento." },
   "controls": { "message": "Controlli" },
   "blocked": { "message": "Bloccati" },
   "hidden": { "message": "Nascosti" },
