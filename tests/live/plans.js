@@ -12,6 +12,10 @@
 //     "See plans" button instead, and says so in the report.
 //  2. popup.html: the line under "Upgrade to Pro" is cfPlansLine() of the
 //     same plans (English and Italian).
+//  2b. A dashboard change reaches the pages: with a retired plan cached 2
+//     minutes ago, options.html#upgrade refreshes plansCache and shows the
+//     real plans; popup.html leaves a cache of no plans 1 minute old alone and
+//     refreshes one 6 minutes old (its line then shows the real plans).
 //  3. A plan-less openPaymentPage (sent from popup.html) opens
 //     options.html#upgrade; sent again while that options tab is open on
 //     another tab of its own, it opens no new page and shows the picker there.
@@ -171,6 +175,112 @@ async function popupScenario(language) {
   return r;
 }
 
+// Polls `fn` (async) every 250 ms until it returns a truthy value or `ms` pass;
+// returns the last value.
+async function pollFor(fn, ms) {
+  const deadline = Date.now() + ms;
+  let value = await fn();
+  while (!value && Date.now() < deadline) {
+    await h.sleep(250);
+    value = await fn();
+  }
+  return value;
+}
+
+// A dashboard change reaches the pages: the picker refreshes a cache over a
+// minute old (here: a retired plan cached 2 minutes ago), the popup a cache of
+// no plans over 5 minutes old, and a cache of no plans under 5 minutes old is
+// left alone by the popup (it is not asked again on every open).
+async function freshnessScenario() {
+  const r = { name: 'dashboard changes reach the picker at once and replace a cache of no plans after 5 min', pass: false, reasons: [], steps: {} };
+  await setLanguage('auto');
+  const real = ((await h.getStorage(['plansCache'])).plansCache || {}).plans;
+  if (!Array.isArray(real)) {
+    r.reasons.push('no plansCache from the earlier scenarios');
+    return r;
+  }
+  const realCards = loadContentDom.plain(cf.cfBuildPlanCards(real, 'en', new Date()));
+  const RETIRED = { nickname: 'retired-test', interval: 'month', unitAmountCents: 111, currency: 'usd' };
+  const MIN = 60 * 1000;
+  const cacheAt = async () => ((await h.getStorage(['plansCache'])).plansCache || {}).fetchedAt;
+  const allErrors = [];
+  try {
+    // a. Picker, retired plan cached 2 min ago -> the real plans
+    const staleAt = Date.now() - 2 * MIN;
+    await h.setStorage({ plansCache: { plans: [RETIRED], fetchedAt: staleAt } });
+    const { page: options, errors } = await openExtensionPage('options.html#upgrade');
+    allErrors.push(errors);
+    try {
+      const shown = await pollFor(async () => {
+        const dom = await h.evalInPage(options, () => ({
+          kinds: Array.from(document.querySelectorAll('#planCards .plan-card'), c => c.dataset.plan),
+          prices: Array.from(document.querySelectorAll('#planCards .plan-card-price'), p => p.textContent),
+          seePlans: !!document.getElementById('planSeePlansBtn')
+        }));
+        const want = realCards.map(c => c.kind);
+        const ok = want.length
+          ? JSON.stringify(dom.kinds) === JSON.stringify(want) && !dom.prices.some(p => p.includes('1.11'))
+          : dom.seePlans;
+        return ok ? dom : null;
+      }, 12000);
+      const fetchedAt = await cacheAt();
+      r.steps.picker = { shown, staleAt, fetchedAt };
+      if (!shown) r.reasons.push('the picker still shows the retired plan (no refresh)');
+      if (!(fetchedAt > staleAt)) r.reasons.push('the picker did not refresh plansCache');
+    } finally {
+      await options.close().catch(() => {});
+    }
+
+    // b. Popup, a cache of no plans 1 min old: kept (no request on every open)
+    const recentEmptyAt = Date.now() - MIN;
+    await h.setStorage({ plansCache: { plans: [], fetchedAt: recentEmptyAt } });
+    const p1 = await openExtensionPage('popup.html');
+    allErrors.push(p1.errors);
+    try {
+      await h.withTimeout(p1.page.waitForSelector('.upgrade-btn', { timeout: 8000 }), 10000, 'upgrade button');
+      await h.sleep(2000);
+      const fetchedAt = await cacheAt();
+      r.steps.popupRecentEmpty = { recentEmptyAt, fetchedAt };
+      if (fetchedAt !== recentEmptyAt) r.reasons.push('the popup refreshed a cache of no plans under 5 minutes old');
+    } finally {
+      await p1.page.close().catch(() => {});
+    }
+
+    // c. Popup, a cache of no plans 6 min old: refreshed, the line shows the real plans
+    const oldEmptyAt = Date.now() - 6 * MIN;
+    await h.setStorage({ plansCache: { plans: [], fetchedAt: oldEmptyAt } });
+    const p2 = await openExtensionPage('popup.html');
+    allErrors.push(p2.errors);
+    try {
+      await h.withTimeout(p2.page.waitForSelector('.upgrade-btn', { timeout: 8000 }), 10000, 'upgrade button');
+      const expected = cf.cfPlansLine(cf.cfBuildPlanCards(real, 'en', new Date()), fmt('en'));
+      const fetchedAt = await pollFor(async () => {
+        const at = await cacheAt();
+        return at > oldEmptyAt ? at : null;
+      }, 12000);
+      const line = await pollFor(async () => {
+        const text = await h.evalInPage(p2.page, () => {
+          const el = document.getElementById('upgradePlans');
+          return el && !el.hidden ? el.textContent : null;
+        });
+        return expected ? (norm(text) === norm(expected) ? text : null) : (text === null ? 'none' : null);
+      }, 8000);
+      r.steps.popupOldEmpty = { oldEmptyAt, fetchedAt, expected, line };
+      if (!fetchedAt) r.reasons.push('the popup did not refresh a cache of no plans 6 minutes old');
+      if (!line) r.reasons.push(`the popup line is not "${expected}"`);
+    } finally {
+      await p2.page.close().catch(() => {});
+    }
+  } finally {
+    // The real plans again, fresh, for the next scenarios
+    await h.setStorage({ plansCache: { plans: real, fetchedAt: Date.now() } });
+  }
+  const errors = allErrors.flat();
+  if (errors.length) r.reasons.push('console/page errors: ' + errors.join(' | '));
+  r.pass = r.reasons.length === 0;
+  return r;
+}
+
 // Waits for a new page in the context whose URL passes `test`.
 function waitForNewPage(context, test, ms) {
   return h.withTimeout(context.waitForEvent('page', { predicate: p => test(p.url()), timeout: ms }), ms + 2000, 'new page');
@@ -287,6 +397,7 @@ async function main() {
       () => pickerScenario('it'),
       () => popupScenario('auto'),
       () => popupScenario('it'),
+      freshnessScenario,
       routingScenario,
       checkoutScenario
     ];

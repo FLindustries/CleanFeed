@@ -1194,8 +1194,9 @@ function renderInterests() {
 // opens options.html#upgrade. Prices come from ExtensionPay (getPlans), never
 // from this file; each card opens that plan's checkout.
 
-// The Pro plans from the background, as cfBuildPlanCards() cards (content-dom.js)
-const planLoader = cfCreatePlansLoader(msg, renderUpgrade);
+// The Pro plans from the background, as cfBuildPlanCards() cards (content-dom.js).
+// fresh: the prices people choose from here are at most a minute old.
+const planLoader = cfCreatePlansLoader(msg, renderUpgrade, { fresh: true });
 
 function planCardEl(card) {
   const featured = card.kind === 'yearly';

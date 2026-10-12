@@ -9,14 +9,16 @@
 //   - cfPlansLine(cards, getMessage): the popup's line under "Upgrade to Pro".
 //   - cfPlansCurrencyToNote(cards, uiLang): the currency a "Prices in ..." note
 //     names, or null when the UI language's readers pay in it already.
-//   - cfCreatePlansLoader(getMessage, onCards): the one copy of the pages'
-//     plans loader (popup.js and options.js): getPlans -> cards -> onCards; a
-//     load() while one is in flight asks exactly once more after it; a failed
-//     request is logged and renders no plans.
+//   - cfCreatePlansLoader(getMessage, onCards, options): the one copy of the
+//     pages' plans loader (popup.js and options.js): getPlans -> cards ->
+//     onCards; a load() while one is in flight asks exactly once more after
+//     it; a failed request is logged and renders no plans; { fresh: true }
+//     (options.js, the picker) asks getPlans { fresh: true }.
 //   - background.js getPlans: ExtPay getPlans() normalized and cached in
-//     chrome.storage.local `plansCache` ({ plans, fetchedAt }) for 24 h; a
-//     stale cache answers at once and refreshes in the background; a failure
-//     keeps the last cache (or answers no plans).
+//     chrome.storage.local `plansCache` ({ plans, fetchedAt }) for 24 h (5 min
+//     when it holds no plans; 1 min for the picker's { fresh: true }); a stale
+//     cache answers at once and refreshes in the background; a failure keeps
+//     the last cache (or answers no plans).
 //   - background.js openPaymentPage: { plan } opens that plan's ExtensionPay
 //     checkout, { direct: true } ExtensionPay's own page, and no plan the
 //     in-app picker options.html#upgrade (an open options tab is reused).
@@ -208,7 +210,7 @@ const flush = () => new Promise(resolve => setImmediate(resolve));
 // content-dom.js in a vm with a fake background: every getPlans request waits
 // until the test answers it (requests[i].resolve / reject). `lang` is what the
 // page's message helper says for uiLocale.
-function plansLoaderPage(lang) {
+function plansLoaderPage(lang, options) {
   const requests = [];
   const warnings = [];
   const rendered = [];
@@ -224,7 +226,7 @@ function plansLoaderPage(lang) {
   });
   assert.strictEqual(typeof cf.cfCreatePlansLoader, 'function', 'content-dom.js defines cfCreatePlansLoader');
   const getMessage = key => (key === 'uiLocale' ? (lang || 'en') : key);
-  const loader = cf.cfCreatePlansLoader(getMessage, cards => rendered.push(plain(cards)));
+  const loader = cf.cfCreatePlansLoader(getMessage, cards => rendered.push(plain(cards)), options);
   return { loader, requests, warnings, rendered };
 }
 
@@ -295,6 +297,25 @@ test('cfCreatePlansLoader: prices are formatted for the page\'s own UI locale', 
   await done;
   const monthly = page.rendered[0].find(c => c.kind === 'monthly');
   assert.ok(monthly.price.includes('2,99') && monthly.price.includes('USD'), monthly.price);
+});
+
+test('cfCreatePlansLoader { fresh: true } asks getPlans { fresh: true }, its follow-up too', async () => {
+  const page = plansLoaderPage('en', { fresh: true });
+  const first = page.loader.load();
+  page.loader.load();
+  assert.deepStrictEqual(page.requests.map(r => r.request), [{ action: 'getPlans', fresh: true }]);
+  page.requests[0].resolve({ plans: LIVE });
+  await first;
+  await flush();
+  assert.deepStrictEqual(page.requests.map(r => r.request), [{ action: 'getPlans', fresh: true }, { action: 'getPlans', fresh: true }]);
+  page.requests[1].resolve({ plans: PLANNED });
+  await flush();
+  assert.deepStrictEqual(plain(page.loader.cards()).map(c => c.price), ['$2.99', '$19.99', '$29.99']);
+});
+
+test('the options page\'s picker loads fresh plans; the popup\'s line uses the cache', () => {
+  assert.ok(/cfCreatePlansLoader\([^)]*\{\s*fresh:\s*true\s*\}\s*\)/.test(read('options.js')), 'options.js passes { fresh: true }');
+  assert.ok(/cfCreatePlansLoader\(cfMsg, renderPlansLine\)/.test(read('popup.js')), 'popup.js keeps the 24 h cache');
 });
 
 test('popup.js and options.js keep no copy of the plans loader', () => {
@@ -442,6 +463,66 @@ test('getPlans: a failed refresh keeps the last cache; with none it answers no p
   c.advance(10 * 60 * 1000);
   await empty.handleMessage({ action: 'getPlans' });
   assert.strictEqual(empty.getPlansCalls(), 2, 'asked again after the retry delay');
+});
+
+test('getPlans { fresh: true } (the picker): a cache over a minute old answers at once and is refreshed', async () => {
+  const c = clock(T0);
+  // What the dashboard sold until a minute and a half ago
+  const cached = { plans: [{ nickname: 'monthly', interval: 'month', unitAmountCents: 399, currency: 'usd' }], fetchedAt: T0 - 90 * 1000 };
+  const bg = loadBackground({ plansCache: cached }, { now: c.now, getPlans: async () => PLANNED });
+
+  const plainReq = await bg.handleMessage({ action: 'getPlans' });
+  await settle();
+  assert.deepStrictEqual(plainReq.plans, cached.plans);
+  assert.strictEqual(bg.getPlansCalls(), 0, 'without fresh the 24 h cache answers alone');
+
+  const res = await bg.handleMessage({ action: 'getPlans', fresh: true });
+  assert.deepStrictEqual(res.plans, cached.plans, 'the cached plans, without waiting for ExtPay');
+  assert.strictEqual(bg.getPlansCalls(), 1, 'a refresh started');
+  for (let i = 0; i < 5; i++) await settle();
+  assert.deepStrictEqual(bg.storage().plansCache, { plans: JSON.parse(JSON.stringify(PLANNED)), fetchedAt: T0 });
+
+  // The refreshed cache re-renders the picker, which asks again: no loop
+  const again = await bg.handleMessage({ action: 'getPlans', fresh: true });
+  await settle();
+  assert.deepStrictEqual(again.plans.map(p => p.unitAmountCents), [299, 1999, 2999]);
+  assert.strictEqual(bg.getPlansCalls(), 1, 'a cache under a minute old answers alone');
+  c.advance(59 * 1000);
+  await bg.handleMessage({ action: 'getPlans', fresh: true });
+  await settle();
+  assert.strictEqual(bg.getPlansCalls(), 1);
+  c.advance(2 * 1000);
+  await bg.handleMessage({ action: 'getPlans', fresh: true });
+  await settle();
+  assert.strictEqual(bg.getPlansCalls(), 2, 'over a minute old: refreshed again');
+});
+
+test('getPlans: a cache of no plans is refreshed after 5 minutes, not 24 h', async () => {
+  const c = clock(T0);
+  const empty = { plans: [], fetchedAt: T0 - 4 * 60 * 1000 };
+  const bg = loadBackground({ plansCache: empty }, { now: c.now, getPlans: async () => LIVE });
+  assert.deepStrictEqual(await bg.handleMessage({ action: 'getPlans' }), { plans: [] });
+  await settle();
+  assert.strictEqual(bg.getPlansCalls(), 0, 'under 5 minutes: no request');
+  c.advance(2 * 60 * 1000);
+  assert.deepStrictEqual(await bg.handleMessage({ action: 'getPlans' }), { plans: [] }, 'answers at once');
+  assert.strictEqual(bg.getPlansCalls(), 1, 'over 5 minutes: refreshed');
+  for (let i = 0; i < 5; i++) await settle();
+  assert.deepStrictEqual(bg.storage().plansCache.plans.map(p => p.nickname), ['monthly', 'yearly']);
+});
+
+test('getPlans { fresh: true } after a failure waits the retry delay like any request', async () => {
+  const c = clock(T0);
+  const cached = { plans: [{ nickname: 'yearly', interval: 'year', unitAmountCents: 1999, currency: 'usd' }], fetchedAt: T0 - 2 * 60 * 1000 };
+  const failing = async () => { throw new Error('offline'); };
+  const bg = loadBackground({ plansCache: cached }, { now: c.now, getPlans: failing, console: quiet() });
+  assert.deepStrictEqual((await bg.handleMessage({ action: 'getPlans', fresh: true })).plans, cached.plans);
+  for (let i = 0; i < 5; i++) await settle();
+  assert.strictEqual(bg.getPlansCalls(), 1);
+  assert.deepStrictEqual(bg.storage().plansCache, cached, 'the failure did not overwrite the cache');
+  await bg.handleMessage({ action: 'getPlans', fresh: true });
+  await settle();
+  assert.strictEqual(bg.getPlansCalls(), 1, 'no new request on every picker open right after a failure');
 });
 
 test('getPlans: without ExtPay it answers no plans', async () => {

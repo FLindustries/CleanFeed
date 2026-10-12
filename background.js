@@ -173,6 +173,14 @@ refreshProStatus();
 const PLANS_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 // After a failed request, the next one waits this long.
 const PLANS_RETRY_MS = 5 * 60 * 1000;
+// A cache of no plans (ExtPay answered none, e.g. while the plans are being
+// edited in the ExtensionPay dashboard) is refreshed after this long instead.
+const PLANS_EMPTY_TTL_MS = 5 * 60 * 1000;
+// The plan picker asks with { fresh: true }: there a cache older than this is
+// refreshed, so a price or plan changed in the ExtensionPay dashboard shows the
+// first time the picker opens (the refreshed cache re-renders it). Not 0: that
+// re-render asks again and must find the cache fresh.
+const PLANS_PICKER_MAX_AGE_MS = 60 * 1000;
 // With nothing cached, getPlans waits this long for ExtPay, then answers no
 // plans; the late answer is still cached.
 const PLANS_FIRST_WAIT_MS = 5000;
@@ -216,12 +224,16 @@ function validPlansCache(cache) {
 //   fresh cache -> { plans: cached, refresh: false, wait: false }
 //   stale cache -> { plans: cached, refresh: true,  wait: false }  answer now, refresh in the background
 //   no cache    -> { plans: [],     refresh: true,  wait: true }   wait for the first answer
-function plansCacheDecision(cache, now, retryAt) {
+// A cache is fresh for PLANS_CACHE_TTL_MS, PLANS_EMPTY_TTL_MS when it holds no
+// plans, and never longer than `maxAgeMs` when that is given (the picker).
+function plansCacheDecision(cache, now, retryAt, maxAgeMs) {
   const valid = validPlansCache(cache);
   const canRefresh = now >= (retryAt || 0);
   if (!valid) return { plans: [], refresh: canRefresh, wait: canRefresh };
   const age = now - valid.fetchedAt;
-  const fresh = age >= 0 && age < PLANS_CACHE_TTL_MS;
+  let ttl = valid.plans.length ? PLANS_CACHE_TTL_MS : PLANS_EMPTY_TTL_MS;
+  if (Number.isFinite(maxAgeMs)) ttl = Math.min(ttl, maxAgeMs);
+  const fresh = age >= 0 && age < ttl;
   return { plans: valid.plans, refresh: !fresh && canRefresh, wait: false };
 }
 
@@ -248,13 +260,14 @@ function refreshPlans() {
 }
 
 // The plans for a page: the cached ones, refreshed in the background when
-// stale. Only with nothing cached does it wait (briefly) for ExtPay.
-async function getPlans() {
+// stale (`forPicker`: the picker's stricter PLANS_PICKER_MAX_AGE_MS). Only
+// with nothing cached does it wait (briefly) for ExtPay.
+async function getPlans(forPicker) {
   let cache = null;
   try {
     cache = (await chrome.storage.local.get('plansCache')).plansCache;
   } catch (e) { /* treated as no cache */ }
-  const decision = plansCacheDecision(cache, Date.now(), plansRetryAt);
+  const decision = plansCacheDecision(cache, Date.now(), plansRetryAt, forPicker ? PLANS_PICKER_MAX_AGE_MS : undefined);
   if (!decision.refresh) return { plans: decision.plans };
   const refresh = refreshPlans();
   if (!decision.wait) return { plans: decision.plans };
@@ -870,8 +883,9 @@ async function handleMessage(request) {
     }
 
     // --- Payment ---
+    // { fresh: true }: the plan picker's request (see PLANS_PICKER_MAX_AGE_MS)
     case 'getPlans': {
-      return await getPlans();
+      return await getPlans(request.fresh === true);
     }
 
     // { plan: nickname } opens that plan's ExtensionPay checkout; { direct: true }

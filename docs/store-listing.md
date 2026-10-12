@@ -1,5 +1,13 @@
 # Chrome Web Store Listing — CleanFeed
 
+> **Release gate (internal notes, not part of the listing: do not paste).**
+> The price lines under FREE & PRO (EN) and GRATIS E PRO (IT) describe the plans ExtensionPay should sell once v1.4 ships. The extension itself shows whatever ExtensionPay's `getPlans()` returns, so the listing must say exactly what the dashboard sells. Before this listing is published or the ExtensionPay plans are changed:
+>
+> 1. **Currency: get an explicit "USD" or "EUR" from the owner.** On 2026-10-12 the owner wrote "il prezzo voglio che sia 2,99 €" and also "fai quello che mi raccomandi"; the v1.4 plan (Ruling 1, research section 4) chose USD. Change nothing in the dashboard until the answer is explicit. If EUR: ExtensionPay most likely uses one currency per extension, so every plan is in EUR and everyone pays in EUR. Rewrite both price lines in euro (EN "€2.99", IT "2,99 €"). The code needs no change: it reads the currency, so Italian shows no currency note and English shows "Prices in EUR."
+> 2. **Dashboard first, listing second.** Publish the price lines only when the dashboard sells exactly: monthly 2.99 (interval month), yearly 19.99 (interval year), lifetime 29.99 (one-time). On 2026-10-12 it sells monthly 3.99 and yearly 29.99 USD, with no lifetime plan.
+> 3. **Keep the nicknames `monthly`, `yearly` and `lifetime`** when repricing: each card's button opens `choose-plan/<nickname>`. Change the dashboard before v1.4 reaches users. In between, the store's v1.2.0 upgrade button still names 3.99 ("$3.99/mo", "3,99€/mese"): more than the new monthly price, never less. In v1.4 the plan picker refreshes plans older than a minute when it opens, and an answer with no plans is asked again after 5 minutes, so a half-edited dashboard does not stick. Only the popup's price line can lag up to 24 h.
+> 4. **The lifetime launch price must really end.** For any one-time plan, the app shows "Launch price until December 31, 2026" through 2026-12-31 (each user's local date). Create the lifetime plan at the launch price only if it will really go up. Then raise it in the dashboard, keeping the nickname `lifetime`, once December 31 has ended in every time zone: on or after 2027-01-01 12:00 UTC (13:00 in Italy). Without that raise the note is false urgency. After the raise, update both price lines here: drop "launch price until ..." and state the new price.
+
 ## Short Description (132 chars max)
 
 **EN:** Block channels permanently, filter by keyword & topic, and hide Shorts. Your YouTube, your rules.

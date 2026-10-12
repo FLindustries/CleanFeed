@@ -242,14 +242,17 @@ function cfPlansCurrencyToNote(cards, uiLang) {
 // The plans loader of popup.html (the line under "Upgrade to Pro") and
 // options.html (the plan picker); never used on YouTube pages.
 // `getMessage` is the page's message helper (its uiLocale formats the
-// prices); `onCards(cards)` renders cfBuildPlanCards() cards. Returns:
+// prices); `onCards(cards)` renders cfBuildPlanCards() cards; `options.fresh`
+// (the picker) asks the background for plans at most a minute old, so a
+// dashboard change shows there at once. Returns:
 //   load()  asks the background (getPlans), builds the cards, calls onCards
 //           and resolves. A load() while one is in flight shares it and makes
 //           exactly one more request once it answers (the plans changed
 //           meanwhile), however many came in. A failed request is logged and
 //           counts as no plans (cards []).
 //   cards() the last cards, or null until the first answer.
-function cfCreatePlansLoader(getMessage, onCards) {
+function cfCreatePlansLoader(getMessage, onCards, options) {
+  const request = options && options.fresh ? { action: 'getPlans', fresh: true } : { action: 'getPlans' };
   let cards = null;
   let inFlight = null;     // the getPlans request being answered
   let askAgain = false;    // load() was called while it was in flight
@@ -262,7 +265,7 @@ function cfCreatePlansLoader(getMessage, onCards) {
     inFlight = (async () => {
       let plans = [];
       try {
-        const res = await chrome.runtime.sendMessage({ action: 'getPlans' });
+        const res = await chrome.runtime.sendMessage(request);
         if (res && Array.isArray(res.plans)) plans = res.plans;
       } catch (e) {
         console.warn('CleanFeed: could not load the Pro plans', e);
