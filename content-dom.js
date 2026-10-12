@@ -76,6 +76,29 @@ function cfIsProBookkeepingOnly(changes) {
   return wasPro === isPro;
 }
 
+// ── Free plan limits ──
+
+// Keywords and topics a Free user can hold together. The same number as
+// Storage.FREE_KEYWORD_LIMIT (storage.js), which the background enforces in
+// addKeyword, bulkAddBlockingTerms and applyPreset (a test keeps them equal).
+const CF_FREE_KEYWORD_LIMIT = 3;
+
+// How much of the Free cap `blockedKeywords` (the saved list) uses: every
+// entry, because a topic is saved there as a keyword too. The background cap
+// counts the same way, so "N/3 used" and the locked topic chips agree with it.
+function cfFreeKeywordsUsed(blockedKeywords) {
+  return Array.isArray(blockedKeywords) ? blockedKeywords.length : 0;
+}
+
+// What the background's answer to whitelistChannel means for the chip:
+// 'saved' only for { success: true }; 'locked' for Strict Mode's
+// { error: 'strict_locked' }; anything else is 'failed', a Free user's
+// { success: false, reason: 'pro_only' } and a missing answer included.
+function cfWhitelistOutcome(res) {
+  if (res && res.error === 'strict_locked') return 'locked';
+  return res && res.success === true ? 'saved' : 'failed';
+}
+
 // ── Pro plans (popup.html and options.html) ──
 // Prices come from ExtensionPay (the background's getPlans): nothing here
 // hard-codes an amount.

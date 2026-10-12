@@ -6,12 +6,14 @@ let state = {};
 
 // Preset profiles — curated bundles of category keys for one-click setup.
 // Each preset's `keys` must exist in CATEGORY_META / KEYWORD_SYNONYMS (content-dom.js).
+// Exactly 3 topics each: the free plan holds 3 keywords and topics, so a free
+// user with nothing blocked can apply any one preset whole.
 const PRESETS = [
-  { id: 'focus_mode', emoji: '\u{1F3AF}', label: 'Focus mode', desc: 'No gaming, drama, reactions, brainrot', keys: ['gaming', 'gossip', 'reaction', 'brainrot'] },
-  { id: 'detox_hustle', emoji: '\u{1F4B0}', label: 'Hustle detox', desc: 'No "get rich quick" content', keys: ['hustle', 'crypto', 'gambling', 'ai_hype'] },
-  { id: 'parent_safe', emoji: '\u{1F468}‍\u{1F469}‍\u{1F467}', label: 'Parent / family safe', desc: 'Filter kids brainrot, horror, NSFW', keys: ['kids', 'brainrot', 'nsfw', 'horror'] },
-  { id: 'no_politics', emoji: '\u{1F5F3}️', label: 'Politics-free zone', desc: 'No politics, news, true crime, conspiracy', keys: ['politics', 'news', 'true_crime', 'conspiracy'] },
-  { id: 'no_drama', emoji: '\u{1F3AD}', label: 'Drama-free', desc: 'No gossip, reactions, brainrot, pranks', keys: ['gossip', 'reaction', 'brainrot', 'pranks'] }
+  { id: 'focus_mode', emoji: '\u{1F3AF}', label: 'Focus mode', desc: 'No gaming, drama, brainrot', keys: ['gaming', 'gossip', 'brainrot'] },
+  { id: 'detox_hustle', emoji: '\u{1F4B0}', label: 'Hustle detox', desc: 'No "get rich quick" content', keys: ['hustle', 'crypto', 'gambling'] },
+  { id: 'parent_safe', emoji: '\u{1F468}‍\u{1F469}‍\u{1F467}', label: 'Parent / family safe', desc: 'Filter brainrot, horror, NSFW', keys: ['brainrot', 'nsfw', 'horror'] },
+  { id: 'no_politics', emoji: '\u{1F5F3}️', label: 'Politics-free zone', desc: 'No politics, news, conspiracy', keys: ['politics', 'news', 'conspiracy'] },
+  { id: 'no_drama', emoji: '\u{1F3AD}', label: 'Drama-free', desc: 'No gossip, reactions, pranks', keys: ['gossip', 'reaction', 'pranks'] }
 ];
 
 // Custom i18n system: supports language override from settings.
@@ -740,8 +742,7 @@ function renderCategories() {
   container.textContent = '';
 
   const blockedKwSet = new Set((state.blockedKeywords || []).map(k => k.keyword.toLowerCase()));
-  const totalKeywords = (state.blockedKeywords || []).length;
-  const atFreeLimit = !state.isPro && totalKeywords >= 3;
+  const atFreeLimit = !state.isPro && cfFreeKeywordsUsed(state.blockedKeywords) >= CF_FREE_KEYWORD_LIMIT;
 
   for (const cat of cfCategoryList()) {
     const isActive = blockedKwSet.has(cat.key);
@@ -1391,7 +1392,12 @@ function setupButtons() {
         // A backup that would weaken filtering needs the strict-mode password
         const res = await sendWithStrict({ action: 'importAllData', data });
         if (res?.success) {
-          alert(msg('importSuccess') !== 'importSuccess' ? msg('importSuccess') : 'Import successful. Page will reload.');
+          let done = msg('importSuccess') !== 'importSuccess' ? msg('importSuccess') : 'Import successful. Page will reload.';
+          // A free user's backup cannot turn Strict Mode on: say so, with the result
+          if (res.strictModeSkipped) {
+            done += '\n\n' + (msg('importStrictSkipped') !== 'importStrictSkipped' ? msg('importStrictSkipped') : 'Strict Mode is a Pro feature and was not imported.');
+          }
+          alert(done);
           window.location.reload();
         } else if (res?.error !== 'strict_locked') { // strict_locked: password cancelled or wrong (already told)
           alert(msg('importError') !== 'importError' ? msg('importError') : 'Import failed: invalid file format.');

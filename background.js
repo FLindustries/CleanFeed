@@ -463,6 +463,19 @@ function importWeakens(data, current) {
   return false;
 }
 
+// Strict Mode is Pro-only to turn on, and an import is another way to turn it
+// on. For a user who is not Pro and has strict mode off, drops strictModeEnabled
+// and strictModePasswordHash from the backup's `incoming` settings. `current`:
+// the stored settings. With strict mode on already, or for Pro, the backup's
+// settings pass as they are (importWeakens and strictModeRefusal guard those).
+// Returns { settings: a copy to merge, dropped: true when the backup would have
+// switched strict mode on }. Pure.
+function importStrictGate(incoming, current, isPro) {
+  if (isPro || (current && current.strictModeEnabled)) return { settings: incoming, dropped: false };
+  const { strictModeEnabled, strictModePasswordHash, ...rest } = incoming;
+  return { settings: rest, dropped: !!strictModeEnabled };
+}
+
 // True when `request` would weaken filtering. `current`: the stored state it
 // changes ({ settings, blockedChannels, blockedKeywords, customSynonyms,
 // disabledSynonyms, whitelistedChannels, categoryTags, categoryTagExclusions }).
@@ -913,17 +926,28 @@ async function handleMessage(request) {
       if (Array.isArray(data.disabledSynonyms)) updates.disabledSynonyms = data.disabledSynonyms;
       if (Array.isArray(data.whitelistedChannels)) updates.whitelistedChannels = data.whitelistedChannels;
       if (data.interests && typeof data.interests === 'object') updates.interests = data.interests;
+      let strictModeSkipped = false;
       if (data.settings && typeof data.settings === 'object') {
         // Merge incoming settings with existing defaults so missing fields don't break
         const cur = await Storage.getSettings();
-        updates.settings = { ...cur, ...data.settings };
+        let incoming = data.settings;
+        // A backup must not switch Strict Mode on for a user who is not Pro. Pro
+        // status is only asked for when the backup carries strict-mode fields.
+        if (!cur.strictModeEnabled && ('strictModeEnabled' in incoming || 'strictModePasswordHash' in incoming)) {
+          const gate = importStrictGate(incoming, cur, await checkProStatus());
+          incoming = gate.settings;
+          strictModeSkipped = gate.dropped;
+        }
+        updates.settings = { ...cur, ...incoming };
       }
       if (data.categoryTags && typeof data.categoryTags === 'object') updates.categoryTags = data.categoryTags;
       if (data.categoryTagExclusions && typeof data.categoryTagExclusions === 'object' && !Array.isArray(data.categoryTagExclusions)) {
         updates.categoryTagExclusions = data.categoryTagExclusions;
       }
       await chrome.storage.local.set(updates);
-      return { success: true, imported: Object.keys(updates) };
+      return strictModeSkipped
+        ? { success: true, imported: Object.keys(updates), strictModeSkipped: true }
+        : { success: true, imported: Object.keys(updates) };
     }
 
     // --- Strict Mode ---

@@ -9,11 +9,15 @@
 //     (chrome.i18n.getMessage) and with English chosen in Settings (the
 //     custom loader), "Passa a Pro" in Italian; options.html's plan picker is
 //     titled "Choose your plan" / "Scegli il tuo piano".
-//  3. options.html, free user with 1 keyword: clicking "Focus mode" adds
-//     nothing, shows no alert and opens no page; an inline notice gives the
-//     real numbers (adds 3, 2 of 3 slots left) with an Upgrade button. The
-//     same in Italian. A preset whose topics are all blocked already applies
-//     with no notice.
+//  3. options.html, free user with 1 custom keyword (minecraft): clicking
+//     "Focus mode" (3 topics) adds nothing, shows no alert and opens no page;
+//     an inline notice gives the real numbers (adds 3, 2 of 3 slots left)
+//     with an Upgrade button. The same in Italian. A preset whose topics are
+//     all blocked already applies with no notice.
+//  3b. Every preset has 3 topics; a free user with nothing blocked applies
+//     each one whole: its 3 topics are saved, no notice, no alert, no new
+//     page; popup.html then counts 3/3 keywords used (topics included) and
+//     locks the other topics.
 //  4. A returning subscriber pays again: ExtPay saves extensionpay_user in
 //     chrome.storage.sync with paid true (it fires no onPaid, paidAt was set
 //     already). proStatusCache turns Pro and an open options.html shows PRO;
@@ -106,7 +110,7 @@ async function priceScenario() {
 async function presetScenario(language, expectedNotice, expectedPrice) {
   const r = { name: `options (${language}): Focus mode on the free plan`, pass: false, reasons: [], steps: {} };
   await setLanguage(language);
-  await h.setStorage({ blockedKeywords: keywords(['gaming']) });
+  await h.setStorage({ blockedKeywords: keywords(['minecraft']) });
   const { page, errors, dialogs } = await openExtensionPage('options.html');
   try {
     const noticeHiddenAtStart = await h.evalInPage(page, () => document.getElementById('presets-notice').hidden);
@@ -128,10 +132,10 @@ async function presetScenario(language, expectedNotice, expectedPrice) {
     if (!notice.visible) r.reasons.push('notice not visible');
     if (dialogs.length) r.reasons.push('dialog shown: ' + JSON.stringify(dialogs));
     if (r.steps.overCap.newPages !== 0) r.reasons.push('a new page (payment?) opened');
-    if (names(s.blockedKeywords).join() !== 'gaming') r.reasons.push('keywords changed: ' + names(s.blockedKeywords).join());
+    if (names(s.blockedKeywords).join() !== 'minecraft') r.reasons.push('keywords changed: ' + names(s.blockedKeywords).join());
 
     // All of its topics blocked already (more than 3 keywords, e.g. Pro lapsed): applies, no notice
-    await h.setStorage({ blockedKeywords: keywords(['gaming', 'gossip', 'reaction', 'brainrot', 'news']) });
+    await h.setStorage({ blockedKeywords: keywords(['gaming', 'gossip', 'brainrot', 'minecraft', 'news']) });
     await h.sleep(800);
     await h.withTimeout(card.click({ timeout: 8000 }), 10000, 'click Focus mode again');
     await h.sleep(1000);
@@ -149,6 +153,76 @@ async function presetScenario(language, expectedNotice, expectedPrice) {
     await page.close().catch(() => {});
   }
   if (errors.length) r.reasons.push('console/page errors: ' + errors.join(' | '));
+  r.pass = r.reasons.length === 0;
+  return r;
+}
+
+// The page's own preset list (label + topics), read from options.html.
+async function readPresets() {
+  const { page } = await openExtensionPage('options.html');
+  try {
+    return await h.evalInPage(page, () => PRESETS.map(p => ({ id: p.id, label: p.label, keys: p.keys.slice() })));
+  } finally {
+    await page.close().catch(() => {});
+  }
+}
+
+// Free user, nothing blocked: every preset applies whole (3 topics), with no
+// notice, no alert and no new page; the popup counts them 3/3 and locks the rest.
+async function freePresetsFitScenario() {
+  const r = { name: 'free with nothing blocked: every preset applies whole, popup counts 3/3', pass: false, reasons: [], presets: {} };
+  await setLanguage('auto');
+  const presets = await readPresets();
+  r.presets.count = presets.length;
+  if (presets.length < 5) r.reasons.push('expected at least 5 presets, got ' + presets.length);
+  for (const preset of presets) {
+    if (preset.keys.length !== 3) r.reasons.push(`${preset.id} has ${preset.keys.length} topics`);
+  }
+  for (const preset of presets) {
+    await h.setStorage({ blockedKeywords: [] });
+    const { page, errors, dialogs } = await openExtensionPage('options.html');
+    try {
+      const pagesBefore = page.context().pages().length;
+      const card = page.locator('.preset-card', { hasText: preset.label }).first();
+      await h.withTimeout(card.click({ timeout: 8000 }), 10000, 'click ' + preset.label);
+      await h.sleep(1200);
+      const s = await h.getStorage(['blockedKeywords']);
+      const view = await h.evalInPage(page, () => ({
+        noticeHidden: document.getElementById('presets-notice').hidden,
+        status: [...document.querySelectorAll('.preset-card.preset-active')].length
+      }));
+      r.presets[preset.id] = { saved: names(s.blockedKeywords), view };
+      if (names(s.blockedKeywords).join() !== preset.keys.join()) r.reasons.push(`${preset.id}: saved "${names(s.blockedKeywords).join()}", expected "${preset.keys.join()}"`);
+      if (!view.noticeHidden) r.reasons.push(preset.id + ': the over-cap notice is shown');
+      if (view.status < 1) r.reasons.push(preset.id + ': the preset card is not marked active');
+      if (dialogs.length) r.reasons.push(preset.id + ': dialog shown: ' + JSON.stringify(dialogs));
+      if (page.context().pages().length !== pagesBefore) r.reasons.push(preset.id + ': a new page opened');
+    } finally {
+      await page.close().catch(() => {});
+    }
+    if (errors.length) r.reasons.push(preset.id + ' console/page errors: ' + errors.join(' | '));
+  }
+
+  // The last preset is still applied: the popup counts its 3 topics as 3/3 and locks the other topics
+  for (const [language, expected] of [['auto', '3/3 keywords used'], ['it', '3/3 parole usate']]) {
+    await setLanguage(language);
+    const { page, errors } = await openExtensionPage('popup.html');
+    try {
+      const popup = await h.evalInPage(page, () => ({
+        headers: [...document.querySelectorAll('.section-header')].map(e => e.textContent),
+        chips: document.querySelectorAll('.category-chip').length,
+        active: document.querySelectorAll('.category-chip.active').length,
+        locked: document.querySelectorAll('.category-chip.locked').length
+      }));
+      r.presets['popup ' + language] = popup;
+      if (!popup.headers.some(t => t.includes(expected))) r.reasons.push(`popup (${language}): no "${expected}" in ${JSON.stringify(popup.headers)}`);
+      if (popup.active !== 3) r.reasons.push(`popup (${language}): ${popup.active} active topic chips, expected 3`);
+      if (popup.locked !== popup.chips - 3) r.reasons.push(`popup (${language}): ${popup.locked} locked of ${popup.chips} chips, expected ${popup.chips - 3}`);
+    } finally {
+      await page.close().catch(() => {});
+    }
+    if (errors.length) r.reasons.push('popup (' + language + ') console/page errors: ' + errors.join(' | '));
+  }
   r.pass = r.reasons.length === 0;
   return r;
 }
@@ -206,7 +280,7 @@ async function returningSubscriberScenario() {
 
 async function main() {
   const startedAt = Date.now();
-  const cancelWatchdog = h.watchdog(180000);
+  const cancelWatchdog = h.watchdog(240000);
   let report;
   try {
     await h.launch();
@@ -216,6 +290,7 @@ async function main() {
       priceScenario,
       () => presetScenario('auto', NOTICE_EN, PRICE_EN),
       () => presetScenario('it', NOTICE_IT, PRICE_IT),
+      freePresetsFitScenario,
       returningSubscriberScenario
     ];
     for (const scenario of run) {

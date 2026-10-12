@@ -303,8 +303,7 @@ function renderBlocked() {
   const CATEGORIES = cfCategoryList();
 
   const blockedKwSet = new Set((state.blockedKeywords || []).map(k => k.keyword.toLowerCase()));
-  const totalKeywords = (state.blockedKeywords || []).length;
-  const atFreeLimit = !state.isPro && totalKeywords >= 3;
+  const atFreeLimit = !state.isPro && cfFreeKeywordsUsed(state.blockedKeywords) >= CF_FREE_KEYWORD_LIMIT;
 
   const catGrid = document.createElement('div');
   catGrid.className = 'category-grid';
@@ -347,13 +346,13 @@ function renderBlocked() {
   kwHeader.style.marginTop = '16px';
 
   const keywords = state.blockedKeywords || [];
-  const kwCount = keywords.length;
 
   const customKwLabel = cfMsg('customKeywords') || 'Custom Keywords';
   const catKeys = new Set(CATEGORIES.map(c => c.key));
   const customKwCount = keywords.filter(kw => !catKeys.has(kw.keyword.toLowerCase())).length;
   if (!state.isPro) {
-    kwHeader.textContent = customKwLabel + ' (' + cfMsg('keywordsUsed', [customKwCount.toString()]) + ')';
+    // The Free cap is shared by keywords and topics (the background counts both)
+    kwHeader.textContent = customKwLabel + ' (' + cfMsg('keywordsUsed', [String(cfFreeKeywordsUsed(state.blockedKeywords))]) + ')';
   } else {
     kwHeader.textContent = customKwLabel + ' (' + customKwCount + ')';
   }

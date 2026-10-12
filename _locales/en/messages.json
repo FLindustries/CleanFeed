@@ -142,6 +142,7 @@
   "importBtnLabel": { "message": "Import JSON" },
   "importConfirm": { "message": "This will REPLACE your current CleanFeed configuration. Continue?" },
   "importSuccess": { "message": "Import successful. Page will reload." },
+  "importStrictSkipped": { "message": "Strict Mode is a Pro feature and was not imported." },
   "importError": { "message": "Import failed: invalid file format." },
   "presetsTitle": { "message": "Quick presets" },
   "presetsDesc": { "message": "One-click bundles to block common content groups." },

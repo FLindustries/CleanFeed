@@ -13,6 +13,12 @@
 //     asks once, a synonym chip then asks nothing; the Strict mode switch of
 //     the free user asks for the password and turns strict mode off (no
 //     payment page).
+//  2b. options.html, free user with strict mode OFF: importing a backup that
+//     has strict mode on does not turn it on. The alert says the rest was
+//     imported and "Strict Mode is a Pro feature and was not imported."
+//     (Italian: "La modalità rigorosa è una funzione Pro e non è stata
+//     importata."); storage keeps strictModeEnabled false and no password
+//     hash, the backup's blocks and other settings arrive.
 //  3. YouTube (strict mode on again): the masthead pause switch is locked
 //     ("Locked by Strict Mode" tooltip; a click shows the toast and pauses
 //     nothing); turning strict mode off unlocks it live, pausing works, and
@@ -242,6 +248,51 @@ async function optionsScenario() {
   return r;
 }
 
+// Free user, strict mode off: a backup with strict mode on is imported without it.
+async function importGateScenario() {
+  const r = { name: "options: a free user's import cannot turn Strict Mode on", pass: false, reasons: [], steps: {} };
+  const cases = [
+    ['auto', 'Strict Mode is a Pro feature and was not imported.'],
+    ['it', 'La modalità rigorosa è una funzione Pro e non è stata importata.']
+  ];
+  for (const [language, note] of cases) {
+    await setStrict(false);
+    const { settings } = await h.getStorage(['settings']);
+    await h.setStorage({ settings: Object.assign({}, settings, { language, hideShorts: false }), blockedKeywords: [{ keyword: 'minecraft', addedAt: Date.now() }] });
+    const { page, errors } = await openExtensionPage('options.html');
+    const d = dialogs(page);
+    try {
+      d.plan(['accept', 'accept']); // the replace confirm, then the result alert (the page reloads)
+      const backup = {
+        blockedKeywords: [{ keyword: 'minecraft', addedAt: 1 }, { keyword: 'news', addedAt: 2 }],
+        settings: { hideShorts: true, strictModeEnabled: true, strictModePasswordHash: HASH }
+      };
+      await h.withTimeout(page.setInputFiles('#importInput', {
+        name: 'backup.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(backup))
+      }), 10000, 'choose backup file');
+      await storageWhen(['blockedKeywords'], x => names(x.blockedKeywords).includes('news'));
+      await h.sleep(1200);
+      const s = await h.getStorage(['settings', 'blockedKeywords']);
+      r.steps[language] = { dialogs: d.seen.slice(), strictModeEnabled: s.settings.strictModeEnabled,
+        hash: s.settings.strictModePasswordHash, hideShorts: s.settings.hideShorts, keywords: names(s.blockedKeywords) };
+      const alertMsg = (d.seen.find(x => x.type === 'alert') || {}).message || '';
+      if (!alertMsg.includes(note)) r.reasons.push(`${language}: alert "${alertMsg}" lacks "${note}"`);
+      if (s.settings.strictModeEnabled !== false) r.reasons.push(language + ': strict mode was turned on by the import');
+      if (s.settings.strictModePasswordHash) r.reasons.push(language + ': a password hash was imported');
+      if (s.settings.hideShorts !== true) r.reasons.push(language + ": the backup's other settings were not imported");
+      if (!names(s.blockedKeywords).includes('news')) r.reasons.push(language + ": the backup's blocks were not imported");
+    } finally {
+      await page.close().catch(() => {});
+    }
+    if (errors.length) r.reasons.push(language + ' console/page errors: ' + errors.join(' | '));
+  }
+  // Later scenarios read English copy: put the language back
+  const { settings: after } = await h.getStorage(['settings']);
+  await h.setStorage({ settings: Object.assign({}, after, { language: 'auto' }) });
+  r.pass = r.reasons.length === 0;
+  return r;
+}
+
 // Content world: state of the masthead pause switch.
 const PAUSE_STATE = `(() => {
   const sw = document.getElementById('cleanfeed-pause-toggle');
@@ -348,7 +399,7 @@ async function main() {
   try {
     await h.launch();
     const scenarios = [];
-    for (const scenario of [popupScenario, optionsScenario, youtubeScenario]) {
+    for (const scenario of [popupScenario, optionsScenario, importGateScenario, youtubeScenario]) {
       await seed();
       try {
         scenarios.push(await scenario());

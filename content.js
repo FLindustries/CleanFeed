@@ -3169,8 +3169,11 @@
               id: ch.id,
               exemptFrom: keyword,
             }).then((res) => {
-              if (res && res.error === 'strict_locked') { showStrictLockedToast(); return; }
-              if (!res || res.error) { showActionFailedToast(); return; }
+              // The chip goes only when the background saved it ({ success: true });
+              // a Free user's { success: false, reason: 'pro_only' } keeps it
+              const outcome = cfWhitelistOutcome(res);
+              if (outcome === 'locked') { showStrictLockedToast(); return; }
+              if (outcome !== 'saved') { showActionFailedToast(); return; }
               chip.remove();
               // Re-filter to un-hide
               document.querySelectorAll('[data-cf-checked]').forEach((el) => {

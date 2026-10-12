@@ -310,3 +310,101 @@ test('verifyStrictPassword still answers for the stored hash', async () => {
   assert.deepStrictEqual(await bg.handleMessage({ action: 'verifyStrictPassword', password: PASSWORD }), { valid: true });
   assert.deepStrictEqual(await bg.handleMessage({ action: 'verifyStrictPassword', password: 'nope' }), { valid: false });
 });
+
+// --- Strict Mode cannot arrive through an import on the Free plan ---
+// A backup from a Pro account (or hand-edited) must not switch strict mode on
+// for a user who is not Pro and has it off. The rest of the backup imports.
+
+const NO_STRICT = { strictModeEnabled: false, strictModePasswordHash: '' };
+
+function strictBackup(extra) {
+  return Object.assign({
+    cleanfeedVersion: '1.4.0',
+    blockedKeywords: [{ keyword: 'gaming', addedAt: 1 }, { keyword: 'minecraft', addedAt: 1 }, { keyword: 'news', addedAt: 2 }],
+    settings: settings({ hideShorts: false })
+  }, extra);
+}
+
+test('import, free with strict mode off: strictModeEnabled and the password hash are dropped, the rest imports, and the answer says so', async () => {
+  const bg = loadBackground(savedState({ settings: settings(NO_STRICT) }), { isPro: false });
+  const res = await bg.handleMessage({ action: 'importAllData', data: strictBackup() });
+  assert.strictEqual(res.success, true);
+  assert.strictEqual(res.strictModeSkipped, true, 'the answer tells the page strict mode was not imported');
+  const s = bg.storage();
+  assert.strictEqual(s.settings.strictModeEnabled, false, 'strict mode stays off');
+  assert.strictEqual(s.settings.strictModePasswordHash, '', 'no password hash arrived');
+  assert.strictEqual(s.settings.hideShorts, false, 'other settings of the backup are imported');
+  assert.deepStrictEqual(s.blockedKeywords.map(k => k.keyword), ['gaming', 'minecraft', 'news'], 'blocks of the backup are imported');
+  // Strict mode is off, so nothing is locked afterwards
+  assert.deepStrictEqual(await bg.handleMessage({ action: 'removeKeyword', index: 0 }), { success: true });
+});
+
+test('import, free with strict mode off: a backup with strict mode off or no settings gets no note', async () => {
+  for (const data of [
+    strictBackup({ settings: settings(NO_STRICT) }),
+    strictBackup({ settings: { hideShorts: false } }),
+    { blockedKeywords: [{ keyword: 'news', addedAt: 2 }] }
+  ]) {
+    const bg = loadBackground(savedState({ settings: settings(NO_STRICT) }), { isPro: false });
+    const res = await bg.handleMessage({ action: 'importAllData', data });
+    assert.strictEqual(res.success, true);
+    assert.notStrictEqual(res.strictModeSkipped, true, JSON.stringify(Object.keys(data)));
+    assert.strictEqual(bg.storage().settings.strictModeEnabled, false);
+  }
+});
+
+test('import, free with strict mode off: a password hash alone (strict flag off) is dropped too', async () => {
+  const bg = loadBackground(savedState({ settings: settings(NO_STRICT) }), { isPro: false });
+  const res = await bg.handleMessage({ action: 'importAllData', data: { settings: { strictModeEnabled: false, strictModePasswordHash: HASH, hideShorts: true } } });
+  assert.strictEqual(res.success, true);
+  assert.strictEqual(bg.storage().settings.strictModePasswordHash, '');
+  assert.strictEqual(bg.storage().settings.strictModeEnabled, false);
+  assert.strictEqual(bg.storage().settings.hideShorts, true);
+});
+
+test('import, Pro with strict mode off: strict mode and its password come in from the backup', async () => {
+  const bg = loadBackground(savedState({ settings: settings(NO_STRICT) }), { isPro: true });
+  const res = await bg.handleMessage({ action: 'importAllData', data: strictBackup() });
+  assert.strictEqual(res.success, true);
+  assert.notStrictEqual(res.strictModeSkipped, true);
+  assert.strictEqual(bg.storage().settings.strictModeEnabled, true);
+  assert.strictEqual(bg.storage().settings.strictModePasswordHash, HASH);
+  assert.deepStrictEqual(await bg.handleMessage({ action: 'removeKeyword', index: 0 }), { error: 'strict_locked' });
+});
+
+test('import, free with strict mode on (Pro lapsed): the existing guard decides, the gate does not touch it', async () => {
+  // Re-importing the user's own backup: nothing weakens, strict mode stays on
+  const same = loadBackground(savedState(), { isPro: false });
+  const resSame = await same.handleMessage({ action: 'importAllData', data: strictBackup({ settings: settings() }) });
+  assert.strictEqual(resSame.success, true);
+  assert.notStrictEqual(resSame.strictModeSkipped, true);
+  assert.strictEqual(same.storage().settings.strictModeEnabled, true);
+  assert.strictEqual(same.storage().settings.strictModePasswordHash, HASH);
+
+  // A backup that switches strict mode off or changes its password still needs the password (importWeakens)
+  const off = loadBackground(savedState(), { isPro: false });
+  const offBackup = strictBackup({ settings: settings(NO_STRICT) });
+  assert.deepStrictEqual(await off.handleMessage({ action: 'importAllData', data: offBackup }), { error: 'strict_locked' });
+  assert.deepStrictEqual(off.writes, []);
+  assert.strictEqual((await off.handleMessage({ action: 'importAllData', data: offBackup, strictPassword: PASSWORD })).success, true);
+  assert.strictEqual(off.storage().settings.strictModeEnabled, false);
+});
+
+test('importStrictGate (pure): drops only the strict fields, only for a non-Pro user with strict off', () => {
+  const bg = loadBackground({});
+  const gate = (incoming, current, isPro) => JSON.parse(JSON.stringify(bg.sandbox.importStrictGate(incoming, current, isPro)));
+  const incoming = { strictModeEnabled: true, strictModePasswordHash: HASH, hideShorts: true, language: 'it' };
+  assert.deepStrictEqual(gate(incoming, { strictModeEnabled: false }, false),
+    { settings: { hideShorts: true, language: 'it' }, dropped: true });
+  assert.deepStrictEqual(gate(incoming, {}, false),
+    { settings: { hideShorts: true, language: 'it' }, dropped: true }, 'missing current settings = strict off');
+  assert.deepStrictEqual(gate(incoming, { strictModeEnabled: false }, true),
+    { settings: incoming, dropped: false }, 'Pro keeps it');
+  assert.deepStrictEqual(gate(incoming, { strictModeEnabled: true }, false),
+    { settings: incoming, dropped: false }, 'strict already on: the existing guard decides');
+  assert.deepStrictEqual(gate({ strictModeEnabled: false, strictModePasswordHash: '', hideShorts: true }, {}, false),
+    { settings: { hideShorts: true }, dropped: false }, 'fields dropped but nothing was switched on: no note');
+  assert.deepStrictEqual(gate({ hideShorts: true }, {}, false), { settings: { hideShorts: true }, dropped: false });
+  // The incoming object is not changed
+  assert.strictEqual(incoming.strictModeEnabled, true);
+});

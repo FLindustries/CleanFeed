@@ -142,6 +142,7 @@
   "importBtnLabel": { "message": "Importa JSON" },
   "importConfirm": { "message": "Questo SOSTITUIRÀ la tua configurazione attuale di CleanFeed. Continuare?" },
   "importSuccess": { "message": "Importazione riuscita. La pagina sarà ricaricata." },
+  "importStrictSkipped": { "message": "La modalità rigorosa è una funzione Pro e non è stata importata." },
   "importError": { "message": "Importazione fallita: formato file non valido." },
   "presetsTitle": { "message": "Preset rapidi" },
   "presetsDesc": { "message": "Pacchetti pronti per bloccare gruppi di contenuti comuni." },
