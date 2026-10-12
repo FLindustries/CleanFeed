@@ -363,11 +363,16 @@ const YT = {
     return null;
   },
 
+  // The handle of the card's channel, as written in its /@handle link and
+  // without the '@' ('mkbhd' for /@mkbhd, 'MKBHD' for /@MKBHD/videos), else
+  // null. A /channel/UC..., /c/Name or /user/Name link holds no handle: the
+  // channel is then matched by name only.
   getChannelId(videoCard) {
-    const link = videoCard.querySelector('a[href^="/@"], #channel-name a, ytd-channel-name a');
-    const href = link?.getAttribute('href') || '';
-    const match = href.match(/\/(channel|c|user|@)([^\/\?]+)/);
-    return match ? match[2] : null;
+    for (const link of videoCard.querySelectorAll('a[href^="/@"], #channel-name a, ytd-channel-name a')) {
+      const handle = cfHandleFromHref(link.getAttribute('href'));
+      if (handle) return handle;
+    }
+    return null;
   },
 
   getVideoTitle(videoCard) {
@@ -479,20 +484,15 @@ const YT = {
     return null;
   },
 
+  // '@handle' of the channel on screen (watch page owner or channel page),
+  // else null. Like getChannelId, only a /@handle link or URL gives one: a
+  // /channel/UC..., /c/ or /user/ page is matched by name only.
   getPageChannelId() {
     const link = YT.getActivePageRoot().querySelector(
       'ytd-video-owner-renderer a[href^="/@"], #channel-header a[href^="/@"], ytd-c4-tabbed-header-renderer a[href^="/@"]'
     );
-    const href = link?.getAttribute('href') || '';
-    const match = href.match(/@([^\/\?]+)/);
-    if (match) return '@' + match[1];
-    // Fallback: extract from URL (the handle or id only: not the tab in
-    // /@name/videos or /channel/UC.../videos)
-    const pathMatch = window.location.pathname.match(/^\/@([^\/?#]+)/);
-    if (pathMatch) return '@' + pathMatch[1];
-    const channelMatch = window.location.pathname.match(/\/channel\/([^\/?#]+)/);
-    if (channelMatch) return channelMatch[1];
-    return null;
+    // Fallback: the URL (the handle only: not the tab in /@name/videos)
+    return cfChannelIdFromHref(link?.getAttribute('href')) || cfChannelIdFromHref(window.location.pathname);
   },
 
   isChannelPage() {
@@ -572,14 +572,54 @@ const YT = {
 
 // --- Channel handles ---
 
+// The handle in a channel link, as written and without the '@' ('mkbhd' for
+// '/@mkbhd', 'MKBHD' for '/@MKBHD/videos?si=...', also on youtube.com), else
+// null. Only a /@ path is a handle: never /channel/UC..., /c/Name or /user/Name.
+function cfHandleFromHref(href) {
+  const match = String(href || '').match(/^(?:https?:\/\/(?:www\.|m\.)?youtube\.com)?\/@([^\/?#]+)/i);
+  return match ? match[1] : null;
+}
+
+// '@handle' for a channel link ('@mkbhd' for '/@mkbhd/videos'), the id a
+// page's Block button stores; null when the link holds no handle.
+function cfChannelIdFromHref(href) {
+  const handle = cfHandleFromHref(href);
+  return handle ? '@' + handle : null;
+}
+
+// Ids stored by older versions that came from a non-@ link and are no handle:
+//  - 'hannel': YT.getChannelId() before 1.4.0 returned it for every card that
+//    linked to /channel/UC... (its regex backtracked to 'c' + 'hannel');
+//  - a channel id 'UC' + 22 characters (blocked from a /channel/UC... page, or
+//    a watch page whose owner link was /channel/UC...).
+// The watch page also stored '/c/Name' and '/user/Name', which have nothing
+// before their first '/'.
+const CF_NOT_A_HANDLE_RE = /^(?:hannel|UC[A-Za-z0-9_-]{22})$/;
+
 // Lowercase '@handle' for a stored or detected channel id ('' for none).
 // Versions before 1.4.0 could store the channel page's tab with the handle
 // ('@name/videos', blocked from that tab): only the part before the first '/'
-// is the handle.
+// is the handle. An id from a non-@ link (see CF_NOT_A_HANDLE_RE) gives ''.
 function cfChannelHandle(id) {
-  const handle = String(id || '').split('/')[0].toLowerCase();
-  if (!handle) return '';
-  return handle.startsWith('@') ? handle : '@' + handle;
+  const first = String(id || '').split('/')[0];
+  if (first.startsWith('@')) return first.length > 1 ? first.toLowerCase() : '';
+  if (!first || CF_NOT_A_HANDLE_RE.test(first)) return '';
+  return '@' + first.toLowerCase();
+}
+
+// Name and handle rules for the stored blocked channels (lowercase names,
+// '@handle's). An entry whose id is no handle (e.g. 'hannel') keeps
+// blocking by its name.
+function cfBlockedChannelRules(blockedChannels) {
+  const names = new Set();
+  const handles = new Set();
+  for (const ch of Array.isArray(blockedChannels) ? blockedChannels : []) {
+    if (!ch) continue;
+    if (ch.name) names.add(String(ch.name).toLowerCase());
+    const handle = cfChannelHandle(ch.id); // also an old '@name/videos'
+    if (handle) handles.add(handle);
+  }
+  return { names, handles };
 }
 
 // --- 3-dot menu injection decision ---

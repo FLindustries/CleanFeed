@@ -227,7 +227,7 @@
 
   // ── Strict Mode ───────────────────────────────────────────────────────
   // While strict mode is on, the on-page controls that weaken filtering
-  // (pause, peek, untag, the "More relevant" toggle, the subscription
+  // (pause, peek, untag, the "Most relevant" toggle, the subscription
   // exception) are locked. No password is ever asked inside a YouTube page:
   // the user turns strict mode off in CleanFeed's settings instead.
 
@@ -305,11 +305,8 @@
     if (YT.isChannelPage()) {
       const pageName = YT.getPageChannelName();
       if (pageName && peekedChannels.has(pageName.toLowerCase())) return true;
-      const pageId = YT.getPageChannelId();
-      if (pageId) {
-        const h = pageId.startsWith('@') ? pageId.toLowerCase() : '@' + pageId.toLowerCase();
-        if (peekedChannels.has(h)) return true;
-      }
+      const pageHandle = cfChannelHandle(YT.getPageChannelId());
+      if (pageHandle && peekedChannels.has(pageHandle)) return true;
     }
     return false;
   }
@@ -492,16 +489,11 @@
       if (interest.query) savedInterestQueries.push(interest.query.toLowerCase());
     }
 
-    blockedChannelNames = new Set();
-    blockedChannelHandles = new Set();
-    const channels = state.blockedChannels || [];
-    for (const ch of channels) {
-      if (ch.name) blockedChannelNames.add(ch.name.toLowerCase());
-      if (ch.id) {
-        const handle = cfChannelHandle(ch.id); // also an old '@name/videos'
-        if (handle) blockedChannelHandles.add(handle);
-      }
-    }
+    // An entry whose stored id is no handle (e.g. 'hannel' from a /channel/
+    // link, before 1.4.0) blocks by name only.
+    const channelRules = cfBlockedChannelRules(state.blockedChannels);
+    blockedChannelNames = channelRules.names;
+    blockedChannelHandles = channelRules.handles;
 
     // Update synonym filters (disabled synonyms + custom synonyms)
     cfSetSynonymFilters(state.disabledSynonyms, state.customSynonyms);
@@ -1056,7 +1048,7 @@
       const pageChannel = YT.getPageChannelName();
       const pageChannelLower = pageChannel ? pageChannel.toLowerCase() : '';
       const pageHandle = YT.getPageChannelId();
-      const pageHandleLower = pageHandle ? (pageHandle.startsWith('@') ? pageHandle.toLowerCase() : '@' + pageHandle.toLowerCase()) : '';
+      const pageHandleLower = cfChannelHandle(pageHandle);
 
       // Skip the block if user has peeked this channel
       const peeked = (pageChannelLower && peekedChannels.has(pageChannelLower)) ||
@@ -2157,8 +2149,8 @@
                      ownerRenderer.querySelector('#channel-name a');
       if (nameEl) {
         channelName = nameEl.textContent.trim();
-        const href = nameEl.getAttribute('href') || '';
-        channelId = href.startsWith('/@') ? href.substring(1) : href.replace('/channel/', '');
+        // '@handle', or null for a /channel/UC... owner link (blocks by name)
+        channelId = cfChannelIdFromHref(nameEl.getAttribute('href'));
       }
 
       // Container: subscribe button is a SIBLING of owner renderer, not inside it
@@ -2221,14 +2213,13 @@
         'data-cf-channel-id': channelId || '',
         onClick: (e) => {
           let name = e.currentTarget.getAttribute('data-cf-channel');
-          let id = e.currentTarget.getAttribute('data-cf-channel-id');
+          let id = e.currentTarget.getAttribute('data-cf-channel-id') || null;
           if (isWatch) {
             const ownerNow = document.querySelector('ytd-watch-metadata ytd-video-owner-renderer, #above-the-fold ytd-video-owner-renderer');
             const nameNow = ownerNow?.querySelector('ytd-channel-name yt-formatted-string a, ytd-channel-name a');
             if (nameNow?.textContent?.trim()) {
               name = nameNow.textContent.trim();
-              const href = nameNow.getAttribute('href') || '';
-              id = href.startsWith('/@') ? href.substring(1) : href.replace('/channel/', '');
+              id = cfChannelIdFromHref(nameNow.getAttribute('href'));
             }
           }
           if (name) handleBlockClick(name, id);
@@ -2239,9 +2230,7 @@
     );
 
     // Create Peek switch
-    const handleLower = channelId
-      ? (channelId.startsWith('@') ? channelId.toLowerCase() : '@' + channelId.toLowerCase())
-      : '';
+    const handleLower = cfChannelHandle(channelId);
     const isPeeked = (channelName && peekedChannels.has(channelName.toLowerCase())) ||
                      (handleLower && peekedChannels.has(handleLower));
     const filteringOn = !isPeeked;
@@ -2716,9 +2705,7 @@
 
   function setChannelPeek(channelName, channelId, on) {
     const nameLower = channelName ? channelName.toLowerCase() : '';
-    const handleLower = channelId
-      ? (channelId.startsWith('@') ? channelId.toLowerCase() : '@' + channelId.toLowerCase())
-      : '';
+    const handleLower = cfChannelHandle(channelId);
 
     if (on) {
       if (nameLower) peekedChannels.add(nameLower);
@@ -2803,7 +2790,7 @@
   // The shelf undoes the whole point of subscribing — it surfaces things YT
   // wants you to watch, not what your subscribed channels actually posted.
 
-  // Localized titles for the "more relevant / recommended" section header.
+  // Localized titles for the "most relevant / recommended" section header.
   // Matched as lowercase substring against the section title text.
   const RELEVANT_SECTION_TITLES = [
     'più pertinenti', 'piu pertinenti',
@@ -2858,11 +2845,11 @@
       document.querySelector('ytd-rich-grid-renderer #header a');
     if (!anchor || !anchor.parentNode) return;
 
-    // Switch semantic: ON = "More relevant" shelf hidden (filtering active)
+    // Switch semantic: ON = "Most relevant" shelf hidden (filtering active)
     //                  OFF = shelf visible (let it through)
     const hidden = currentSettings.hideSubsRelevant !== false;
     const label = msg('subsCleanerLabel') !== 'subsCleanerLabel'
-      ? msg('subsCleanerLabel') : 'Hide "More relevant"';
+      ? msg('subsCleanerLabel') : 'Hide "Most relevant"';
     const title = hidden
       ? (msg('showRelevantShelfTitle') !== 'showRelevantShelfTitle'
           ? msg('showRelevantShelfTitle') : 'Click to show YouTube’s algorithmic shelf')

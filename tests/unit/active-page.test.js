@@ -139,8 +139,9 @@ test('getPageChannelName/Id on a channel tab read the handle from the URL withou
   assert.strictEqual(root.cf.YT.getPageChannelId(), '@mkbhd');
   const encoded = withPages('/@caf%C3%A9/videos', [el('ytd-browse', { 'page-subtype': 'channels' })]);
   assert.strictEqual(encoded.cf.YT.getPageChannelName(), 'café');
+  // A /channel/UC... URL holds no handle: no id, the channel is matched by name.
   const byId = withPages('/channel/UCBJycsmduvYEL83R_U4JriQ/videos', [el('ytd-browse', { 'page-subtype': 'channels' })]);
-  assert.strictEqual(byId.cf.YT.getPageChannelId(), 'UCBJycsmduvYEL83R_U4JriQ');
+  assert.strictEqual(byId.cf.YT.getPageChannelId(), null);
 });
 
 test('cfChannelHandle: a lowercase @handle, also for an id stored with a channel tab', () => {
@@ -150,7 +151,8 @@ test('cfChannelHandle: a lowercase @handle, also for an id stored with a channel
   // stored by versions before 1.4.0 when blocking from a channel's tab
   assert.strictEqual(cfChannelHandle('@mkbhd/videos'), '@mkbhd');
   assert.strictEqual(cfChannelHandle('@MKBHD/shorts'), '@mkbhd');
-  assert.strictEqual(cfChannelHandle('UCBJycsmduvYEL83R_U4JriQ/videos'), '@ucbjycsmduvyel83r_u4jriq');
+  // a channel id (stored from a /channel/UC... page) is not a handle
+  assert.strictEqual(cfChannelHandle('UCBJycsmduvYEL83R_U4JriQ/videos'), '');
   for (const none of ['', null, undefined, '/videos']) assert.strictEqual(cfChannelHandle(none), '', String(none));
 });
 

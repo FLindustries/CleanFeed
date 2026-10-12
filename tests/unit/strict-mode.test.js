@@ -137,7 +137,7 @@ test('isWeakeningAction: an import that disables strict mode, changes its passwo
     'disables strict mode': { settings: { strictModeEnabled: false } },
     'changes the password': { settings: { strictModePasswordHash: 'f'.repeat(64) } },
     'turns Hide Shorts off': { settings: { hideShorts: false } },
-    'turns Hide "More relevant" off': { settings: { hideSubsRelevant: false } },
+    'turns Hide "Most relevant" off': { settings: { hideSubsRelevant: false } },
     'removes a blocked channel': { blockedChannels: [] },
     'drops a blocked channel id': { blockedChannels: [{ name: 'Drama Daily', blockedAt: 1 }] },
     'removes a blocked keyword': { blockedKeywords: [{ keyword: 'gaming', addedAt: 1 }] },
