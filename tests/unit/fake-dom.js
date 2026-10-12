@@ -10,14 +10,16 @@
 //
 // Elements answer matches / querySelector / querySelectorAll / closest for a
 // small CSS subset: comma lists, the descendant combinator (whitespace), and
-// compounds made of a tag (or *), #id, .class, [attr], [attr="v"], [attr^="v"].
+// compounds made of a tag (or *), #id, .class, [attr], [attr="v"], [attr^="v"],
+// [attr*="v"]. They can be changed with remove(), removeAttribute(),
+// classList.remove() and style.<property>.
 // Anything else (>, +, ~, :pseudo, unquoted values) throws, so a test can never
 // pass because a selector was silently ignored. Results are in document order,
 // like the real DOM, and selectors are not scoped (as in the real DOM, the
 // ancestors in `A B` may lie outside the element querySelector is called on).
 
 const COMPOUND_RE = /^([a-zA-Z][\w-]*|\*)?((?:#[\w-]+|\.[\w-]+|\[[^\]]+\])*)$/;
-const PART_RE = /#([\w-]+)|\.([\w-]+)|\[\s*([\w-]+)\s*(?:(\^?=)\s*"([^"]*)"\s*)?\]/g;
+const PART_RE = /#([\w-]+)|\.([\w-]+)|\[\s*([\w-]+)\s*(?:([\^*]?=)\s*"([^"]*)"\s*)?\]/g;
 
 function parseCompound(text) {
   const m = COMPOUND_RE.exec(text);
@@ -44,6 +46,7 @@ function parseCompound(text) {
       const value = p[5];
       if (!op) checks.push(n => n.hasAttribute(name));
       else if (op === '=') checks.push(n => n.getAttribute(name) === value);
+      else if (op === '*=') checks.push(n => n.hasAttribute(name) && n.getAttribute(name).includes(value));
       else checks.push(n => n.hasAttribute(name) && n.getAttribute(name).startsWith(value));
     }
   }
@@ -79,6 +82,7 @@ class FakeElement {
   constructor(tag, attrs, children) {
     this.tagName = String(tag).toUpperCase();
     this.attrs = Object.assign({}, attrs);
+    this.style = {};
     this.parentElement = null;
     this.childNodes = [];
     this.children = [];
@@ -97,7 +101,12 @@ class FakeElement {
   get className() { return this.getAttribute('class') || ''; }
   get classList() {
     const classes = this.className.split(/\s+/).filter(Boolean);
-    return { contains: name => classes.includes(name) };
+    return {
+      contains: name => classes.includes(name),
+      remove: (...names) => {
+        if (this.hasAttribute('class')) this.attrs.class = classes.filter(c => !names.includes(c)).join(' ');
+      }
+    };
   }
   get textContent() {
     return this.childNodes.map(c => (typeof c === 'string' ? c : c.textContent)).join('');
@@ -105,6 +114,16 @@ class FakeElement {
 
   hasAttribute(name) { return Object.prototype.hasOwnProperty.call(this.attrs, name); }
   getAttribute(name) { return this.hasAttribute(name) ? String(this.attrs[name]) : null; }
+  removeAttribute(name) { delete this.attrs[name]; }
+
+  // Detaches this element (and its subtree) from its parent.
+  remove() {
+    const parent = this.parentElement;
+    if (!parent) return;
+    parent.children.splice(parent.children.indexOf(this), 1);
+    parent.childNodes.splice(parent.childNodes.indexOf(this), 1);
+    this.parentElement = null;
+  }
 
   matches(selector) {
     return parseSelector(selector).some(compounds => matchesComplex(this, compounds));

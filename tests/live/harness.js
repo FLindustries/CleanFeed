@@ -52,7 +52,8 @@ const state = {
   extensionId: null,
   profileDir: null,
   headless: null,
-  consentSettled: false
+  consentSettled: false,
+  developerMode: false
 };
 
 // ── Timeouts ─────────────────────────────────────────────────────────────
@@ -253,7 +254,7 @@ async function waitForStorageInit(sw) {
   throw new Error('extension storage was never initialised (onInstalled did not finish)');
 }
 
-async function launchOnce(pw, exe, headless) {
+async function launchOnce(pw, exe, headless, extensionDir) {
   const profileDir = prepareProfileDir();
   state.profileDir = profileDir;
   let context;
@@ -267,8 +268,8 @@ async function launchOnce(pw, exe, headless) {
         // Playwright adds --disable-extensions by default; we need extensions.
         ignoreDefaultArgs: ['--disable-extensions'],
         args: [
-          `--disable-extensions-except=${REPO_ROOT}`,
-          `--load-extension=${REPO_ROOT}`,
+          `--disable-extensions-except=${extensionDir}`,
+          `--load-extension=${extensionDir}`,
           '--lang=en-US'
         ],
         timeout: LAUNCH_TIMEOUT_MS - 5000
@@ -294,13 +295,15 @@ async function launchOnce(pw, exe, headless) {
   }
 }
 
-// Launches Chromium with the extension loaded from the repo root. Tries
-// headless first (new headless supports extensions), falls back to headed if
-// the extension's service worker never appears. If a Chromium build cannot be
-// started or will not load the extension, the next installed build is tried
-// (at most 3). Returns the BrowserContext.
-async function launch() {
+// Launches Chromium with the extension loaded from the repo root (or from
+// `options.extensionDir`, e.g. a temp copy a test changes and then reloads
+// with reloadExtension()). Tries headless first (new headless supports
+// extensions), falls back to headed if the extension's service worker never
+// appears. If a Chromium build cannot be started or will not load the
+// extension, the next installed build is tried (at most 3). Returns the BrowserContext.
+async function launch(options) {
   if (state.context) throw new Error('harness already launched: call close() first');
+  const extensionDir = (options && options.extensionDir) || REPO_ROOT;
   const pw = resolvePlaywrightCore();
   const exes = chromiumCandidates().slice(0, 3);
   const modes = process.env.CF_HEADED === '1' ? [false] : [true, false];
@@ -308,7 +311,7 @@ async function launch() {
   for (const exe of exes) {
     for (const headless of modes) {
       try {
-        return await launchOnce(pw, exe, headless);
+        return await launchOnce(pw, exe, headless, extensionDir);
       } catch (err) {
         const firstLine = String(err.message).split('\n')[0];
         failures.push(`${exe} (${headless ? 'headless' : 'headed'}): ${firstLine}`);
@@ -358,6 +361,48 @@ async function getServiceWorker() {
   } finally {
     try { await withTimeout(waker.close(), CALL_TIMEOUT_MS, 'close waker page'); } catch (e) { /* ignore */ }
   }
+}
+
+// Chromium re-enables a reloaded unpacked extension only in developer mode
+// (otherwise it is disabled as "unsupportedDeveloperExtension"). Turns it on
+// in this throwaway test profile, from chrome://extensions.
+async function enableDeveloperMode() {
+  if (state.developerMode) return;
+  const page = await newPage();
+  try {
+    await withTimeout(
+      page.goto('chrome://extensions/', { waitUntil: 'domcontentloaded', timeout: CALL_TIMEOUT_MS }),
+      CALL_TIMEOUT_MS + 2000,
+      'open chrome://extensions'
+    );
+    await evalInPage(page, () => chrome.developerPrivate.updateProfileConfiguration({ inDeveloperMode: true }));
+    state.developerMode = true;
+  } finally {
+    try { await withTimeout(page.close(), CALL_TIMEOUT_MS, 'close chrome://extensions'); } catch (e) { /* ignore */ }
+  }
+}
+
+// Reloads the extension like an update does: chrome.runtime.reload() in the
+// service worker (from disk, so changes to an unpacked copy apply), then waits
+// for the new service worker and for onInstalled's storage setup. Content
+// scripts in open tabs are orphaned. Returns the ms until the new worker ran.
+async function reloadExtension() {
+  const context = requireContext();
+  await enableDeveloperMode();
+  const old = await getServiceWorker();
+  const started = Date.now();
+  const next = withTimeout(
+    context.waitForEvent('serviceworker', { predicate: w => isOurServiceWorker(w) && w !== old, timeout: SW_TIMEOUT_MS }),
+    SW_TIMEOUT_MS + 2000,
+    'service worker after reload'
+  );
+  next.catch(() => {}); // awaited below
+  state.sw = null;
+  // The worker goes away while answering: the evaluate itself may fail
+  try { await withTimeout(old.evaluate(() => { chrome.runtime.reload(); }), SW_CALL_TIMEOUT_MS, 'chrome.runtime.reload'); } catch (e) { /* expected */ }
+  state.sw = await next;
+  await waitForStorageInit(state.sw);
+  return Date.now() - started;
 }
 
 // Runs fn(arg) inside the extension's service worker. If the worker cannot be
@@ -527,6 +572,7 @@ async function close() {
   state.extensionId = null;
   // The next launch uses a fresh profile, so YouTube asks for consent again.
   state.consentSettled = false;
+  state.developerMode = false;
   if (!context) return;
   try {
     await withTimeout(context.close(), CLOSE_TIMEOUT_MS, 'context.close');
@@ -550,6 +596,7 @@ module.exports = {
   newPage,
   getExtensionId,
   getServiceWorker,
+  reloadExtension,
   setStorage,
   getStorage,
   gotoYouTube,

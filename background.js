@@ -166,6 +166,35 @@ refreshProStatus();
 
 // --- Install / Update ---
 
+// Chrome runs content scripts only in pages loaded after CleanFeed is
+// installed or updated, so YouTube tabs that are already open would get no
+// filtering until reloaded. They get the manifest's YouTube CSS and scripts
+// here, in manifest order (features.js first). After an update the old
+// content script in such a tab is orphaned; the new one takes the page over
+// (content.js). A tab that cannot be injected (discarded, an error page,
+// closed meanwhile) is skipped: CleanFeed starts there on its next load.
+async function injectIntoOpenYouTubeTabs() {
+  const entry = (chrome.runtime.getManifest().content_scripts || [])
+    .find(cs => (cs.matches || []).includes('*://*.youtube.com/*'));
+  if (!entry) return;
+  let tabs;
+  try {
+    tabs = await chrome.tabs.query({ url: entry.matches });
+  } catch (e) {
+    console.warn('CleanFeed: could not list the open YouTube tabs:', e);
+    return;
+  }
+  await Promise.all(tabs.map(async (tab) => {
+    const target = { tabId: tab.id };
+    try {
+      if (entry.css && entry.css.length > 0) await chrome.scripting.insertCSS({ target, files: entry.css });
+      await chrome.scripting.executeScript({ target, files: entry.js });
+    } catch (e) {
+      // This tab only
+    }
+  }));
+}
+
 chrome.runtime.onInstalled.addListener(async (details) => {
   await Storage.init();
   // Smart Decay hidden (features.js): no alarm; remove one an older version made.
@@ -183,6 +212,11 @@ chrome.runtime.onInstalled.addListener(async (details) => {
     } catch (e) {
       console.warn('CleanFeed: failed to reset interest prompt count:', e);
     }
+  }
+
+  // Not on a Chrome update: the content scripts running then are still connected
+  if (details && (details.reason === 'install' || details.reason === 'update')) {
+    await injectIntoOpenYouTubeTabs();
   }
 });
 

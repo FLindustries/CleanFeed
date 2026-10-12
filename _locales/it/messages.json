@@ -164,5 +164,7 @@
   "quickAddSubmit": { "message": "Aggiungi selezionate" },
   "autoTaggedChannelsTitle": { "message": "Canali etichettati in automatico per questo argomento" },
   "autoTaggedChannelsDesc": { "message": "Tutti i video di questi canali sono nascosti perché diversi loro video corrispondevano a questo argomento. Togli l'etichetta a un canale per rivedere i suoi altri video. Non verrà più etichettato in automatico per questo argomento." },
-  "untagChannelBtn": { "message": "Togli etichetta" }
+  "untagChannelBtn": { "message": "Togli etichetta" },
+  "actionFailedToast": { "message": "CleanFeed non è riuscito a salvarlo. Riprova." },
+  "extensionUpdatedToast": { "message": "CleanFeed è stato aggiornato — ricarica questa pagina" }
 }

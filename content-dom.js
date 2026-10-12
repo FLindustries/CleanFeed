@@ -1186,3 +1186,92 @@ function cfExtractKeywords(titles) {
   // user doesn't drown in noise.
   return candidates.slice(0, 40).map(c => ({ phrase: c.phrase, count: c.count, type: c.type }));
 }
+
+// --- Extension updates (content.js) ---
+//
+// An extension update, reload or removal leaves the content script running in
+// open tabs, but its extension context is gone: every chrome.* call fails.
+// After an install or update, background.js injects a new content script into
+// each open YouTube tab; it runs in a new script world next to the orphaned
+// one and shares only the DOM with it.
+
+// Attribute on <html> naming the content-script instance that runs the page.
+const CF_INSTANCE_ATTR = 'data-cleanfeed-instance';
+
+// True when a CleanFeed content script already ran in `doc`: its marker on
+// <html>, or (versions before 1.4.0 set no marker) an element with a
+// CleanFeed id, such as its pre-hide style sheet, or a card it checked.
+function cfPageRanCleanFeed(doc) {
+  return doc.documentElement.hasAttribute(CF_INSTANCE_ATTR) ||
+    !!doc.querySelector('[id^="cleanfeed-"], [data-cf-checked], [data-cf-quickadd-injected]');
+}
+
+// True when `err` (a thrown error or chrome.runtime.lastError) says the
+// extension context is gone.
+function cfIsContextInvalidated(err) {
+  const text = err && typeof err === 'object' ? err.message : err;
+  return /extension context invalidated/i.test(String(text || ''));
+}
+
+// Sends `payload` with `runtime` (chrome.runtime) and resolves to the answer,
+// or to null when there is none: chrome.runtime.lastError, a thrown error, an
+// empty answer. Never rejects. When the extension context is gone, `onDead()`
+// runs as well.
+function cfSendMessage(runtime, payload, onDead) {
+  return new Promise((resolve) => {
+    const fail = (err) => {
+      if (typeof onDead === 'function' && (!runtime || !runtime.id || cfIsContextInvalidated(err))) onDead();
+      resolve(null);
+    };
+    try {
+      runtime.sendMessage(payload, (answer) => {
+        const err = runtime.lastError;
+        if (err) fail(err);
+        else resolve(answer === undefined ? null : answer);
+      });
+    } catch (e) {
+      fail(e);
+    }
+  });
+}
+
+// Classes and data attributes CleanFeed puts on YouTube's own elements (and
+// on <body>): clearing a page removes only these from them.
+const CF_STATE_CLASSES = [
+  'cleanfeed-hidden', 'cleanfeed-relevant-hidden', 'cleanfeed-hide-shorts',
+  'cleanfeed-hide-comments', 'cleanfeed-paused', 'cleanfeed-time-limit-reached'
+];
+const CF_STATE_ATTRS = [
+  'data-cf-checked', 'data-cf-blocked', 'data-cf-reason', 'data-cf-quickadd-injected',
+  'data-cf-search-intercepted', 'data-cf-reel-key'
+];
+
+// True when `el` is an element CleanFeed added to the page (a switch, button,
+// menu item, banner, toast, popover, its style sheet), false for a YouTube
+// element that only carries one of CF_STATE_CLASSES.
+function cfIsCleanFeedUi(el) {
+  const id = el.id || '';
+  if (id.startsWith('cleanfeed-') || id === 'cf-channel-blocked-msg') return true;
+  return String(el.getAttribute('class') || '').split(/\s+/).some(c =>
+    c === 'cf-switch' || (c.startsWith('cleanfeed-') && !CF_STATE_CLASSES.includes(c)));
+}
+
+// Undoes what a CleanFeed instance did to `doc`: removes its UI and the
+// classes and attributes it put on YouTube's elements, and shows the Shorts
+// filter chip again. Hidden videos show again. data-cf-paused-video stays
+// (whoever runs the page next resumes that short once it is not hidden).
+function cfClearCleanFeedPage(doc) {
+  const candidates = doc.querySelectorAll('[id^="cleanfeed-"], #cf-channel-blocked-msg, .cf-switch, [class*="cleanfeed-"]');
+  for (const el of candidates) {
+    if (cfIsCleanFeedUi(el)) el.remove();
+  }
+  for (const cls of CF_STATE_CLASSES) {
+    for (const el of doc.querySelectorAll('.' + cls)) el.classList.remove(cls);
+  }
+  for (const attr of CF_STATE_ATTRS) {
+    for (const el of doc.querySelectorAll('[' + attr + ']')) el.removeAttribute(attr);
+  }
+  for (const chip of doc.querySelectorAll('yt-chip-cloud-chip-renderer')) {
+    if (chip.style.display === 'none' && chip.textContent.trim() === 'Shorts') chip.style.display = '';
+  }
+}

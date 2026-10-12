@@ -33,12 +33,21 @@
 // and refreshes it on service worker start, so that write happens in every
 // test. It is kept out of `writes` and `storage()`, which describe the user's
 // data; read it with bg.proStatusCache() and bg.proWrites (each value written).
+//
+// Open tabs and script injection. `options`:
+//   tabs           what chrome.tabs.query() returns (default []): [{ id, url }]
+//   scriptingError (call) => an Error to throw for that chrome.scripting call
+//                  (call: { method: 'insertCSS' | 'executeScript', tabId, files }), or null
+// bg.tabsQueries holds every chrome.tabs.query() argument, bg.scriptingCalls
+// every chrome.scripting call ({ method, tabId, files }), failed ones included.
+// chrome.runtime.getManifest() returns the real manifest.json (version 0.0.0-test).
 
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
 const ROOT = path.resolve(__dirname, '..', '..');
+const MANIFEST = JSON.parse(fs.readFileSync(path.join(ROOT, 'manifest.json'), 'utf8'));
 const PRO_CACHE_KEY = 'proStatusCache';
 
 function clone(value) {
@@ -90,6 +99,14 @@ function loadBackground(initialStorage, options) {
   // ExtPay's own storage (it saves extensionpay_* in sync); kept out of `writes`
   const sync = fakeStorageArea('sync', opts.syncStorage, [], [], storageChanged);
   const alarmCalls = [];
+  const tabsQueries = [];
+  const scriptingCalls = [];
+  const scriptingCall = (method, injection) => {
+    const call = { method, tabId: injection.target.tabId, files: clone(injection.files) };
+    scriptingCalls.push(call);
+    const err = opts.scriptingError ? opts.scriptingError(call) : null;
+    if (err) throw err;
+  };
   const paidListeners = [];
   let getUserCalls = 0;
   const getUser = opts.getUser || (async () => ({ paid: isPro }));
@@ -99,7 +116,7 @@ function loadBackground(initialStorage, options) {
       onInstalled: listener('onInstalled'),
       onStartup: listener('onStartup'),
       onMessage: listener('onMessage'),
-      getManifest: () => ({ version: '0.0.0-test' })
+      getManifest: () => Object.assign(clone(MANIFEST), { version: '0.0.0-test' })
     },
     alarms: {
       onAlarm: listener('onAlarm'),
@@ -107,7 +124,14 @@ function loadBackground(initialStorage, options) {
       clear(name) { alarmCalls.push(['clear', name]); return Promise.resolve(true); },
       get(name, cb) { alarmCalls.push(['get', name]); if (cb) cb(null); }
     },
-    tabs: { create() {} }
+    tabs: {
+      create() {},
+      async query(queryInfo) { tabsQueries.push(clone(queryInfo)); return clone(opts.tabs || []); }
+    },
+    scripting: {
+      insertCSS: async injection => scriptingCall('insertCSS', injection),
+      executeScript: async injection => { scriptingCall('executeScript', injection); return []; }
+    }
   };
   const sandbox = {
     console: opts.console || console,
@@ -152,6 +176,8 @@ function loadBackground(initialStorage, options) {
     writes,
     listeners,
     alarmCalls,
+    tabsQueries,
+    scriptingCalls,
     chrome,
     sandbox
   };

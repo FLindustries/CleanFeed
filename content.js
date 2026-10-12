@@ -7,6 +7,22 @@
 (() => {
   'use strict';
 
+  // ── One CleanFeed per page ────────────────────────────────────────────
+  // The same extension instance injected twice (the manifest and
+  // background.js both reaching a tab that is still loading) shares one
+  // script world: it runs once.
+  if (window.__cleanfeedInstanceId) return;
+  const instanceId = Date.now().toString(36) + Math.random().toString(36).slice(2);
+  window.__cleanfeedInstanceId = instanceId;
+  // An older instance, orphaned by an update or reload (it runs in another
+  // script world), ran this page before: this one takes the page over and
+  // clears what the older one left before its first filter pass.
+  const takesOverPage = cfPageRanCleanFeed(document);
+  document.documentElement.setAttribute(CF_INSTANCE_ATTR, instanceId);
+  // Every page / document / window listener is added with this signal, so
+  // stopInstance() removes them all at once.
+  const lifetime = new AbortController();
+
   // ── State ──────────────────────────────────────────────────────────────
 
   let blockedChannelNames = new Set();
@@ -50,6 +66,10 @@
   let pendingCuriosityCheck = null; // pending waitForSearchResults timeout
   let _timeTrackerInterval = null;
   let _timeAccumulated = 0;
+  let scheduleInterval = null; // schedule re-check (only while Schedule mode exists)
+  let menuObserver = null;     // 3-dot menu popups (watchForMenuPopup)
+  let markerObserver = null;   // CF_INSTANCE_ATTR on <html> (init)
+  let contextDead = false;     // the extension context is gone: this instance stopped
 
   // ── Helpers ────────────────────────────────────────────────────────────
 
@@ -79,22 +99,79 @@
     }
   }
 
+  // Asks the background. Resolves to its answer, or to null when it could not
+  // be asked (cfSendMessage, content-dom.js): null is never a success. A dead
+  // extension context stops this instance (onContextDead).
   function sendMsg(payload) {
-    return new Promise((resolve) => {
-      try {
-        chrome.runtime.sendMessage(payload, (resp) => {
-          if (chrome.runtime.lastError) {
-            // Extension was reloaded — silently ignore
-            resolve({});
-            return;
-          }
-          resolve(resp || {});
-        });
-      } catch (e) {
-        // Extension context invalidated — silently ignore
-        resolve({});
-      }
-    });
+    if (contextDead) return Promise.resolve(null);
+    return cfSendMessage(chrome.runtime, payload, onContextDead);
+  }
+
+  // A request the user made could not be saved. With a dead extension context
+  // the reload notice (onContextDead) says so instead.
+  function showActionFailedToast() {
+    if (contextDead) return;
+    showToast(msg('actionFailedToast'));
+  }
+
+  // ── Extension updated, reloaded or removed ────────────────────────────
+  // This instance's chrome.* calls then fail for good. After an update or
+  // reload background.js injects a new instance into the page right away; it
+  // takes the page over (CF_INSTANCE_ATTR) and clears what this one left.
+
+  // How long an orphaned instance waits for that new instance before it
+  // clears the page itself.
+  const ORPHAN_GRACE_MS = 1500;
+  // Read now: messages cannot be read once the extension context is gone.
+  // init() reads it again in the language chosen in Settings.
+  let reloadNoticeText = msg('extensionUpdatedToast');
+
+  // chrome.runtime.id disappears with the extension context
+  function contextAlive() {
+    try {
+      return !!(chrome.runtime && chrome.runtime.id);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function ownsPage() {
+    return document.documentElement.getAttribute(CF_INSTANCE_ATTR) === instanceId;
+  }
+
+  // Stops everything this instance runs: page listeners, observers, timers
+  // and its chrome.* listeners. Stats and auto-tag hits not sent yet are
+  // dropped (they can no longer be sent).
+  function stopInstance() {
+    lifetime.abort();
+    for (const obs of [observer, menuObserver, markerObserver]) {
+      if (obs) obs.disconnect();
+    }
+    for (const timer of [debounceTimer, categoryHitFlushTimer, subCheckTimer, logFlushTimer, pendingCuriosityCheck]) {
+      clearTimeout(timer);
+    }
+    for (const interval of [searchWatcherInterval, _timeTrackerInterval, scheduleInterval]) {
+      clearInterval(interval);
+    }
+    try {
+      chrome.storage.onChanged.removeListener(onStorageChanged);
+      chrome.runtime.onMessage.removeListener(onRuntimeMessage);
+    } catch (e) { /* the extension context is gone */ }
+  }
+
+  // The extension context is gone: stop for good. If no new instance has
+  // taken the page over after ORPHAN_GRACE_MS (CleanFeed was disabled or
+  // removed, or could not be injected), clear the page (UI, hidden videos)
+  // and show one small toast asking for a reload.
+  function onContextDead() {
+    if (contextDead) return;
+    contextDead = true;
+    stopInstance();
+    setTimeout(() => {
+      if (!ownsPage()) return;
+      cfClearCleanFeedPage(document);
+      showToast(reloadNoticeText, 10000);
+    }, ORPHAN_GRACE_MS);
   }
 
   // Returns an <img> using the extension's actual green icon, falling back to
@@ -287,8 +364,16 @@
   }
 
   async function init() {
+    // A newer instance taking this page over rewrites the marker on <html>:
+    // if this instance is orphaned by then, it stops at once.
+    markerObserver = new MutationObserver(() => {
+      if (!contextAlive()) onContextDead();
+    });
+    markerObserver.observe(document.documentElement, { attributes: true, attributeFilter: [CF_INSTANCE_ATTR] });
+
     // Load custom language for content script messages
     await loadContentLanguage();
+    reloadNoticeText = msg('extensionUpdatedToast');
 
     // Pre-apply Shorts hiding immediately (before waiting for full state)
     // to eliminate any flash of Shorts content during load.
@@ -300,6 +385,10 @@
     } catch (e) { /* storage not ready yet — init will handle it */ }
 
     const state = await sendMsg({ action: 'getFullState' });
+    if (contextDead) return;
+    // Taking over from an orphaned instance: drop its UI, hidden videos and
+    // markers right before this instance's first pass (same task: no flash).
+    if (takesOverPage) cfClearCleanFeedPage(document);
     applyState(state);
 
     filterPage();
@@ -315,26 +404,19 @@
     applyRelevantSectionVisibility();
     startTimeTracker();
 
-    document.addEventListener('yt-navigate-finish', onNavigate);
+    document.addEventListener('yt-navigate-finish', onNavigate, { signal: lifetime.signal });
     document.addEventListener('yt-page-data-updated', () => {
       filterPage();
       checkSearchQueryChanged();
-    });
+    }, { signal: lifetime.signal });
     startSearchQueryWatcher();
     chrome.storage.onChanged.addListener(onStorageChanged);
-
-    // Listen for direct refilter messages from popup/background
-    chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-      if (request && request.action === 'refilterPage') {
-        onStorageChanged({ blockedChannels: true }, 'local');
-        sendResponse({ success: true });
-      }
-    });
+    chrome.runtime.onMessage.addListener(onRuntimeMessage);
 
     // Re-check schedule status every 5 minutes so filtering kicks in/out on time
     // (only while Schedule mode exists, see features.js)
     if (CF_FEATURES.schedule) {
-      setInterval(() => {
+      scheduleInterval = setInterval(() => {
         if (currentSettings.scheduleEnabled) {
           // Reset cf-checked state so cards get re-evaluated under new schedule status
           document.querySelectorAll('[data-cf-checked]').forEach((el) => {
@@ -346,6 +428,14 @@
           filterPage();
         }
       }, 5 * 60 * 1000);
+    }
+  }
+
+  // Direct refilter requests from the popup / background
+  function onRuntimeMessage(request, sender, sendResponse) {
+    if (request && request.action === 'refilterPage') {
+      onStorageChanged({ blockedChannels: true }, 'local');
+      sendResponse({ success: true });
     }
   }
 
@@ -369,7 +459,8 @@
   }
 
   function applyState(state) {
-    if (!state) return;
+    // No answer, or not a full state (e.g. { error }): keep the current one
+    if (!state || !state.settings) return;
     logDebugState(state);
     currentSettings = state.settings || {};
     isPro = !!state.isPro;
@@ -494,6 +585,7 @@
 
   async function onNavigate() {
     const state = await sendMsg({ action: 'getFullState' });
+    if (contextDead) return;
 
     // Reset page-scoped overrides on every navigation. The user said "solo
     // su questa pagina" — pause and peeks must NOT leak to the next page.
@@ -579,6 +671,7 @@
 
     const wasStrictLocked = isStrictLocked();
     const state = await sendMsg({ action: 'getFullState' });
+    if (contextDead) return;
     applyState(state);
 
     // Remove ALL CleanFeed hiding — then re-evaluate everything fresh
@@ -1274,6 +1367,7 @@
     if (observer) observer.disconnect();
 
     observer = new MutationObserver(() => {
+      if (!contextAlive()) { onContextDead(); return; }
       // Immediately re-apply CSS-only toggles (zero cost, prevents flicker).
       // This runs on every mutation but classList.add is a no-op if already set.
       if (currentSettings.hideShorts) {
@@ -1339,7 +1433,7 @@
         lastMenuClickAt = Date.now();
         lastMenuClickToken = lastClickedVideoCard ? String(++menuClickSeq) : '';
       },
-      true
+      { capture: true, signal: lifetime.signal }
     );
   }
 
@@ -1394,7 +1488,7 @@
       e.stopImmediatePropagation();
 
       showSuggestedVideoPrompt(result.category, result.href, result.card);
-    }, true);
+    }, { capture: true, signal: lifetime.signal });
 
     document.addEventListener('click', (e) => {
       // Block the click that follows our intercepted mousedown
@@ -1414,7 +1508,7 @@
       e.stopPropagation();
       e.stopImmediatePropagation();
       showSuggestedVideoPrompt(result.category, result.href, result.card);
-    }, true);
+    }, { capture: true, signal: lifetime.signal });
   }
 
   function showSuggestedVideoPrompt(category, href, card) {
@@ -1514,7 +1608,8 @@
       attributeFilter: ['style', 'focused_', 'aria-hidden', 'class', 'opened', 'aria-expanded'],
     };
 
-    const menuObserver = new MutationObserver(() => {
+    menuObserver = new MutationObserver(() => {
+      if (!contextAlive()) { onContextDead(); return; }
       const popup = YT.getMenuPopup();
       if (!popup) return;
       // Stop observing while we edit the popup: our own insertions/removals
@@ -1643,7 +1738,11 @@
       })
     );
 
-    if (result && result.reason === 'already_blocked') {
+    if (!result || result.error) {
+      showActionFailedToast();
+      return;
+    }
+    if (result.reason === 'already_blocked') {
       showToast('"' + name + '" is already blocked.');
       return;
     }
@@ -1751,12 +1850,16 @@
       // A topic key (true_crime) is shown by its display name; other keywords as typed
       const shown = cfCategoryLabel(keyword);
       const result = await sendMsg({ action: 'addKeyword', keyword });
-      if (result && result.reason === 'free_limit') {
+      if (!result || result.error) {
+        showActionFailedToast();
+        return;
+      }
+      if (result.reason === 'free_limit') {
         showToast(msg('keywordLimitToast'));
         sendMsg({ action: 'openPaymentPage' });
         return;
       }
-      if (result && result.reason === 'already_exists') {
+      if (result.reason === 'already_exists') {
         showToast(msg('keywordAlreadyBlocked', [shown]) !== 'keywordAlreadyBlocked'
           ? msg('keywordAlreadyBlocked', [shown])
           : '"' + shown + '" is already blocked.');
@@ -1898,7 +2001,11 @@
         // Add as custom synonym to the selected category
         removeMenu();
         const result = await sendMsg({ action: 'addCustomSynonym', category: selectedCat, synonym: kw });
-        if (result && result.reason === 'already_exists') {
+        if (!result || result.error) {
+          showActionFailedToast();
+          return;
+        }
+        if (result.reason === 'already_exists') {
           showToast('"' + kw + '" is already in ' + cfCategoryLabel(selectedCat));
         } else {
           showToast(msg('keywordBlockedToast', [kw]) !== 'keywordBlockedToast'
@@ -1920,7 +2027,7 @@
         document.querySelectorAll('[data-cf-checked]').forEach((el) => { delete el.dataset.cfChecked; });
         // Reload state so getExpandedKeywords picks up the custom synonym
         const newState = await sendMsg({ action: 'getFullState' });
-        if (newState) cfSetSynonymFilters(newState.disabledSynonyms, newState.customSynonyms);
+        if (newState && newState.settings) cfSetSynonymFilters(newState.disabledSynonyms, newState.customSynonyms);
         filterPage();
       } else {
         blockKeyword(kw);
@@ -2192,7 +2299,8 @@
           onClick: untagLocked ? showStrictLockedToast : async () => {
             for (const cat of autoTaggedCats) {
               const res = await sendMsg({ action: 'untagChannelForCategory', category: cat, channelName });
-              if (res.error === 'strict_locked') { showStrictLockedToast(); return; }
+              if (res && res.error === 'strict_locked') { showStrictLockedToast(); return; }
+              if (!res || res.error) { showActionFailedToast(); return; }
             }
             showToast('Untagged ' + channelName + ' from ' + autoTaggedCats.map(cfCategoryLabel).join(', '));
             // Refresh local state + refilter
@@ -2433,8 +2541,8 @@
     showToast('Adding ' + items.length + '…');
 
     const res = await sendMsg({ action: 'bulkAddBlockingTerms', items });
-    if (!res) {
-      showToast('Failed to add keywords');
+    if (!res || res.error) {
+      showActionFailedToast();
       return;
     }
 
@@ -2751,7 +2859,8 @@
       onToggle: async () => {
         const newVal = !hidden;
         const res = await sendMsg({ action: 'updateSetting', key: 'hideSubsRelevant', value: newVal });
-        if (res.error === 'strict_locked') { showStrictLockedToast(); return; }
+        if (res && res.error === 'strict_locked') { showStrictLockedToast(); return; }
+        if (!res || res.error) { showActionFailedToast(); return; }
         currentSettings.hideSubsRelevant = newVal;
         applyRelevantSectionVisibility();
         injectSubscriptionsToggle();
@@ -2801,14 +2910,14 @@
         if (e.key !== 'Enter') return;
         const query = searchInput.value.trim();
         if (query) scheduleInterestCheck(query);
-      });
+      }, { signal: lifetime.signal });
 
       const searchBtn = document.querySelector('#search-icon-legacy, button[aria-label="Search"], ytd-searchbox button');
       if (searchBtn) {
         searchBtn.addEventListener('click', () => {
           const query = searchInput.value.trim();
           if (query) scheduleInterestCheck(query);
-        });
+        }, { signal: lifetime.signal });
       }
     }
 
@@ -2837,7 +2946,7 @@
       }
       flushLogQueue();
       flushCategoryHits();
-    }, { once: true });
+    }, { once: true, signal: lifetime.signal });
   }
 
   // Detect when the search query in the URL changes
@@ -3041,7 +3150,8 @@
               id: ch.id,
               exemptFrom: keyword,
             }).then((res) => {
-              if (res.error === 'strict_locked') { showStrictLockedToast(); return; }
+              if (res && res.error === 'strict_locked') { showStrictLockedToast(); return; }
+              if (!res || res.error) { showActionFailedToast(); return; }
               chip.remove();
               // Re-filter to un-hide
               document.querySelectorAll('[data-cf-checked]').forEach((el) => {
@@ -3258,19 +3368,21 @@
           return;
         }
         const res = await sendMsg({ action: 'bulkAddBlockingTerms', items });
-        if (res) {
-          const parts = [];
-          if (res.addedKw > 0) parts.push(res.addedKw + ' keyword');
-          if (res.addedSyn > 0) parts.push(res.addedSyn + ' synonym');
-          if (res.skippedFree > 0) parts.push(res.skippedFree + ' skipped (free limit)');
-          showToast(parts.length > 0 ? 'Added: ' + parts.join(', ') : nothingAddedText());
-          if (res.skippedFree > 0) sendMsg({ action: 'openPaymentPage' });
-          // Refresh state + refilter so the card disappears immediately
-          const newState = await sendMsg({ action: 'getFullState' });
-          if (newState) applyState(newState);
-          document.querySelectorAll('[data-cf-checked]').forEach(el => { delete el.dataset.cfChecked; });
-          filterPage();
+        if (!res || res.error) {
+          showActionFailedToast();
+          return;
         }
+        const parts = [];
+        if (res.addedKw > 0) parts.push(res.addedKw + ' keyword');
+        if (res.addedSyn > 0) parts.push(res.addedSyn + ' synonym');
+        if (res.skippedFree > 0) parts.push(res.skippedFree + ' skipped (free limit)');
+        showToast(parts.length > 0 ? 'Added: ' + parts.join(', ') : nothingAddedText());
+        if (res.skippedFree > 0) sendMsg({ action: 'openPaymentPage' });
+        // Refresh state + refilter so the card disappears immediately
+        const newState = await sendMsg({ action: 'getFullState' });
+        if (newState) applyState(newState);
+        document.querySelectorAll('[data-cf-checked]').forEach(el => { delete el.dataset.cfChecked; });
+        filterPage();
       }
     });
     footer.appendChild(cancel);
