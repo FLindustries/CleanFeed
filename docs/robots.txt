@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://flindustries.github.io/CleanFeed/sitemap.xml

@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CleanFeed for YouTube: Block Channels &amp; Keywords, Hide Shorts</title>
+  <meta name="description" content="Free Chrome extension that hides YouTube channels you block, filters titles by keyword or 35 ready-made topics, and removes Shorts. No account, no tracking.">
+  <link rel="canonical" href="https://flindustries.github.io/CleanFeed/">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#0f4732">
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="assets/icon-128.png" type="image/png" sizes="128x128">
+  <link rel="apple-touch-icon" href="assets/icon-128.png">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="preload" as="image" href="assets/cleanfeed-popup-block-by-topic.webp" type="image/webp">
+
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CleanFeed">
+  <meta property="og:title" content="CleanFeed for YouTube: Block Channels &amp; Keywords, Hide Shorts">
+  <meta property="og:description" content="Block a YouTube channel from the 3-dot menu and its videos leave Home, search and Up next. Filter by keyword or 35 topics, hide Shorts. Free, no account.">
+  <meta property="og:url" content="https://flindustries.github.io/CleanFeed/">
+  <meta property="og:image" content="https://flindustries.github.io/CleanFeed/assets/og.png">
+  <meta property="og:image:width" content="1400">
+  <meta property="og:image:height" content="560">
+  <meta property="og:image:alt" content="CleanFeed for YouTube: block the channels, words and topics you don't want. Shows the topic grid and the Block channel permanently menu item.">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="CleanFeed for YouTube: Block Channels &amp; Keywords, Hide Shorts">
+  <meta name="twitter:description" content="Block a YouTube channel from the 3-dot menu and its videos leave Home, search and Up next. Filter by keyword or 35 topics, hide Shorts. Free, no account.">
+  <meta name="twitter:image" content="https://flindustries.github.io/CleanFeed/assets/og.png">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "CleanFeed for YouTube",
+    "alternateName": "CleanFeed",
+    "description": "Chrome extension that hides videos from YouTube channels you block, filters titles by keyword or 35 ready-made topics, and removes Shorts. No account, no tracking.",
+    "applicationCategory": "BrowserApplication",
+    "applicationSubCategory": "Browser extension",
+    "operatingSystem": "Google Chrome (desktop)",
+    "softwareVersion": "1.4.0",
+    "url": "https://flindustries.github.io/CleanFeed/",
+    "installUrl": "https://chromewebstore.google.com/detail/cleanfeed-for-youtube-blo/iikgdocegpniapcigmmgcnacfojmmnnd?utm_source=website&utm_campaign=site",
+    "image": "https://flindustries.github.io/CleanFeed/assets/og.png",
+    "screenshot": [
+      "https://flindustries.github.io/CleanFeed/assets/cleanfeed-block-channel-permanently-menu.png",
+      "https://flindustries.github.io/CleanFeed/assets/cleanfeed-35-ready-made-topics.png",
+      "https://flindustries.github.io/CleanFeed/assets/cleanfeed-search-before-after-gaming-topic.png",
+      "https://flindustries.github.io/CleanFeed/assets/cleanfeed-block-words-from-video-title.png",
+      "https://flindustries.github.io/CleanFeed/assets/cleanfeed-hide-shorts-and-comments.png"
+    ],
+    "featureList": [
+      "Block YouTube channels from the video 3-dot menu",
+      "Hide videos by whole-word keywords in the title",
+      "35 ready-made topics with related terms",
+      "Hide YouTube Shorts",
+      "Hide YouTube comments",
+      "Strict Mode password lock (Pro)"
+    ],
+    "offers": [
+      { "@type": "Offer", "name": "Free", "price": "0", "priceCurrency": "USD" },
+      { "@type": "Offer", "name": "Pro monthly", "price": "2.99", "priceCurrency": "USD" },
+      { "@type": "Offer", "name": "Pro yearly", "price": "19.99", "priceCurrency": "USD" },
+      { "@type": "Offer", "name": "Pro Lifetime (launch price)", "price": "29.99", "priceCurrency": "USD", "priceValidUntil": "2026-12-31" }
+    ]
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      { "@type": "Question", "name": "Is CleanFeed really free?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. The free plan has unlimited channel blocking, 3 slots shared by keywords and topics, Hide Shorts, Hide comments and every tool except Strict Mode and the Pro extras listed below. Pro is optional: it adds unlimited keywords and topics, Strict Mode, a log of the last 100 hidden videos and exceptions for channels you subscribe to." } },
+      { "@type": "Question", "name": "Does CleanFeed work on my phone, tablet or TV?", "acceptedAnswer": { "@type": "Answer", "text": "No. CleanFeed is a Chrome extension, so it works on youtube.com in Chrome on a computer. It can't change the YouTube app on phones, tablets, TVs or game consoles." } },
+      { "@type": "Question", "name": "Why doesn't CleanFeed hide anything in my Subscriptions feed?", "acceptedAnswer": { "@type": "Answer", "text": "That's on purpose. You picked those channels, so channel, keyword and topic blocks never apply to the Subscriptions feed. Two things do work there: Hide Shorts, and hiding the \"More relevant\" section that YouTube's algorithm adds to the feed." } },
+      { "@type": "Question", "name": "Do I need an account to use CleanFeed?", "acceptedAnswer": { "@type": "Answer", "text": "No. There's no CleanFeed account and no sign-up. If you buy Pro, payment runs through ExtensionPay's checkout with Stripe, which asks for an email address for the purchase." } },
+      { "@type": "Question", "name": "What does CleanFeed do with my data?", "acceptedAnswer": { "@type": "Answer", "text": "Your blocklists and settings stay in your browser. CleanFeed has no analytics and no tracking, and it doesn't send your lists anywhere. The only outside service it talks to is ExtensionPay, for plan prices and payments." } },
+      { "@type": "Question", "name": "Does blocking a channel tell YouTube or the creator?", "acceptedAnswer": { "@type": "Answer", "text": "No. CleanFeed hides videos on your screen. It sends nothing to YouTube and the channel isn't notified. That also means it doesn't train YouTube's recommendations: YouTube may keep suggesting the channel, and CleanFeed keeps hiding it. A video you open from a direct link still plays." } },
+      { "@type": "Question", "name": "How do keywords and topics match video titles?", "acceptedAnswer": { "@type": "Answer", "text": "Keywords match whole words in a video's title, in any language and alphabet: blocking \"game\" hides \"Game night\" but not \"Endgame\". In search results CleanFeed also checks the description snippet. A topic is a ready-made word list: turn on Crypto and titles with words like bitcoin or blockchain go too. Topic lists cover English and Italian words, and you can switch off any term or add your own." } },
+      { "@type": "Question", "name": "Can I move my blocklist to another computer?", "acceptedAnswer": { "@type": "Answer", "text": "Yes, with Export and Import in CleanFeed's Settings. Export saves your blocks and settings to a JSON file, and Import loads that file on the other computer." } },
+      { "@type": "Question", "name": "Can I use CleanFeed as a parental control?", "acceptedAnswer": { "@type": "Answer", "text": "Only loosely. Strict Mode (Pro) asks for a password before anyone can unblock channels, remove keywords or turn off Hide Shorts. It can't stop someone with access to Chrome's extension settings from turning CleanFeed off or removing it, so it isn't a full parental-control tool." } },
+      { "@type": "Question", "name": "What happens when YouTube changes its layout?", "acceptedAnswer": { "@type": "Answer", "text": "Something may slip through for a while. CleanFeed works on YouTube's pages, and YouTube changes them often, which can break any extension like it until an update ships. If you spot a problem, use Report a Bug in CleanFeed's Settings or email factuallogic98@gmail.com." } }
+    ]
+  }
+  </script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="./" aria-label="CleanFeed home">
+        <svg viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="#2b7656"/><rect x="12" y="15.5" width="40" height="7.5" rx="1.5" fill="#f3faf6"/><rect x="12" y="29.5" width="29.5" height="7" rx="1.5" fill="#f3faf6"/><rect x="12" y="43.5" width="11" height="7.5" rx="1.5" fill="#f3faf6"/></svg>
+        <span>CleanFeed <small>for YouTube</small></span>
+      </a>
+      <nav class="site-nav" aria-label="Main">
+        <ul>
+          <li><a href="how-to-block-youtube-channels.html">Block channels</a></li>
+          <li><a href="hide-youtube-shorts.html">Hide Shorts</a></li>
+          <li><a href="blocktube-alternative.html"><span class="nav-long">BlockTube alternative</span><span class="nav-short">vs BlockTube</span></a></li>
+          <li><a href="#pricing">Pricing</a></li>
+        </ul>
+      </nav>
+      <a class="header-cta" href="https://chromewebstore.google.com/detail/cleanfeed-for-youtube-blo/iikgdocegpniapcigmmgcnacfojmmnnd?utm_source=website&amp;utm_campaign=site">Add to Chrome</a>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero on-forest" aria-labelledby="hero-title">
+      <div class="wrap">
+        <div class="hero-copy">
+          <p class="eyebrow">Chrome extension for YouTube</p>
+          <h1 id="hero-title">Block the YouTube channels, words and topics <span class="mint">you don't want</span></h1>
+          <p class="hero-lede">CleanFeed hides them from Home, search and Up next, right inside YouTube. Shorts too, with one switch.</p>
+          <div class="hero-actions">
+            <a class="btn btn-primary" href="https://chromewebstore.google.com/detail/cleanfeed-for-youtube-blo/iikgdocegpniapcigmmgcnacfojmmnnd?utm_source=website&amp;utm_campaign=site">Add to Chrome<span class="visually-hidden">,</span> <span class="btn-note">it's free</span></a>
+            <a class="btn btn-ghost" href="#features">See what it does</a>
+          </div>
+          <ul class="hero-facts">
+            <li><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 10.5l3.2 3.2L15 6.8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>Unlimited channel blocking on the free plan</li>
+            <li><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 10.5l3.2 3.2L15 6.8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>No account</li>
+            <li><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 10.5l3.2 3.2L15 6.8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>No tracking</li>
+          </ul>
+        </div>
+        <div class="hero-visual">
+          <img class="hero-popup" src="assets/cleanfeed-popup-block-by-topic.webp" width="760" height="960" fetchpriority="high"
+               alt="The CleanFeed popup on its Blocked tab: a grid of 35 topics from Crypto to Brainrot, with Crypto and Gaming switched on, and a field for custom keywords.">
+          <img class="hero-menu" src="assets/cleanfeed-3-dot-menu-items.webp" width="474" height="486" loading="lazy"
+               alt="A YouTube video's 3-dot menu with two items added by CleanFeed: Block channel permanently, and Not interested in this topic.">
+          <span class="hero-tag" aria-hidden="true">Added by CleanFeed</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="pain-title">
+      <div class="wrap pain">
+        <h2 id="pain-title">Clicked “Don't recommend channel” and it came back?</h2>
+        <div class="pain-body">
+          <p>YouTube's “Don't recommend channel” and “Not interested” are feedback for its recommendations. They aren't a blocklist, and YouTube's help page doesn't say they keep a channel out of search.</p>
+          <p>CleanFeed keeps a list in your browser and hides the videos that match it as the page loads, so a blocked channel's videos are hidden on Home, search and Up next.</p>
+          <p><a href="how-to-block-youtube-channels.html">How to block a YouTube channel, step by step</a></p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section band-2" id="features" aria-labelledby="features-title">
+      <div class="wrap">
+        <div class="section-head">
+          <p class="eyebrow">How it works</p>
+          <h2 id="features-title">Everything happens inside YouTube</h2>
+          <p>Block from the menus you already use. Change anything and every open YouTube tab updates right away, no reload.</p>
+        </div>
+
+        <article class="feature">
+          <div class="feature-text">
+            <p class="eyebrow">Channels</p>
+            <h3>Block a channel from the 3-dot menu</h3>
+            <p>Pick “Block channel permanently” in any video's 3-dot menu, or press “Block this channel” next to Subscribe. Its videos disappear at once.</p>
+            <ul class="ticks">
+              <li>Hidden from Home, search, Up next, channel pages, playlists and Shorts shelves</li>
+              <li>In the Shorts player, a blocked channel's Short is hidden and paused, so you don't hear it</li>
+              <li>Also matched by @handle where YouTube shows it, which helps when a channel is renamed</li>
+              <li>Unlimited on the free plan</li>
+            </ul>
+          </div>
+          <figure class="shot">
+            <a href="assets/cleanfeed-block-channel-permanently-menu.png" title="Open the full-size screenshot"><picture>
+              <source srcset="assets/cleanfeed-block-channel-permanently-menu.webp" type="image/webp">
+              <img src="assets/cleanfeed-block-channel-permanently-menu.png" width="1280" height="800" loading="lazy"
+                   alt="YouTube search results for Minecraft with a video's 3-dot menu open. Under YouTube's own items, CleanFeed adds Block channel permanently and Not interested in this topic.">
+            </picture></a>
+          </figure>
+        </article>
+
+        <article class="feature flip">
+          <div class="feature-text">
+            <p class="eyebrow">Keywords and topics</p>
+            <h3>Block a word, or a whole topic at once</h3>
+            <p>Type a word or phrase and videos with it in the title are hidden. Or switch on one of 35 ready-made topics, each with its own list of related terms.</p>
+            <ul class="ticks">
+              <li>Whole words only: “game” hides “Game night” but not “Endgame”</li>
+              <li>Works in any language and alphabet. In search, the description snippet is checked too</li>
+              <li>Topic word lists cover English and Italian titles. Switch off any term, or add your own</li>
+              <li>Gaming, Tech, AI Hype, News and Sports let some analysis, history and documentary titles through</li>
+              <li>3 videos from one channel hidden for the same topic? CleanFeed hides the whole channel. Untag undoes it</li>
+              <li>Free: 3 slots shared by keywords and topics. Pro: unlimited</li>
+            </ul>
+            <div class="topics">
+              <h4 class="visually-hidden">The 35 ready-made topics</h4>
+              <ul class="chips" aria-label="The 35 ready-made topics">
+                <li>Crypto</li><li>Gambling</li><li>Politics</li><li>Gossip</li><li>ASMR</li><li>Mukbang</li><li>Pranks</li>
+                <li>Astrology</li><li>Conspiracy</li><li>NSFW</li><li>Clickbait</li><li>Gaming</li><li>K-Pop</li><li>Anime</li>
+                <li>Diet</li><li>Hustle</li><li>Horror</li><li>True Crime</li><li>Reaction</li><li>Unboxing</li><li>Fitness</li>
+                <li>Beauty</li><li>Fashion</li><li>Travel</li><li>Food</li><li>Cars</li><li>Sports</li><li>Tech</li>
+                <li>AI Hype</li><li>News</li><li>Religion</li><li>Parenting</li><li>Kids</li><li>Paranormal</li><li>Brainrot</li>
+              </ul>
+            </div>
+          </div>
+          <div class="shot-pair">
+            <figure class="shot">
+              <a href="assets/cleanfeed-35-ready-made-topics.png" title="Open the full-size screenshot"><picture>
+                <source srcset="assets/cleanfeed-35-ready-made-topics.webp" type="image/webp">
+                <img src="assets/cleanfeed-35-ready-made-topics.png" width="1280" height="800" loading="lazy"
+                     alt="The CleanFeed popup's Block by Topic grid with 35 topics. Crypto and Gaming are switched on, and 2 of the 3 free keyword slots are used.">
+              </picture></a>
+            </figure>
+            <figure class="shot">
+              <a href="assets/cleanfeed-search-before-after-gaming-topic.png" title="Open the full-size screenshot"><picture>
+                <source srcset="assets/cleanfeed-search-before-after-gaming-topic.webp" type="image/webp">
+                <img src="assets/cleanfeed-search-before-after-gaming-topic.png" width="1280" height="800" loading="lazy"
+                     alt="The same YouTube search for how to build a castle, before and after blocking the Gaming topic. The Minecraft castle video is gone; the real castle videos stay.">
+              </picture></a>
+              <figcaption>The same search before and after switching on Gaming. It applies live, without a reload.</figcaption>
+            </figure>
+          </div>
+        </article>
+
+        <article class="feature">
+          <div class="feature-text">
+            <p class="eyebrow">Find what to block</p>
+            <h3>Pick words straight from a video title</h3>
+            <p>Hover a video and click the green CF+ button. Its title turns into words and phrases you can tick and block.</p>
+            <ul class="ticks">
+              <li>“Not interested in this topic” in the 3-dot menu: block the video's whole topic, one word, or skip just that video</li>
+              <li>Scan, on a channel page, suggests up to 40 words and phrases that keep coming up in its titles</li>
+              <li>Words you add count toward the free plan's 3 slots</li>
+            </ul>
+          </div>
+          <figure class="shot">
+            <a href="assets/cleanfeed-block-words-from-video-title.png" title="Open the full-size screenshot"><picture>
+              <source srcset="assets/cleanfeed-block-words-from-video-title.webp" type="image/webp">
+              <img src="assets/cleanfeed-block-words-from-video-title.png" width="1280" height="800" loading="lazy"
+                   alt="CleanFeed's Pick words to block dialog over YouTube search results, built from the title Minecraft GENIUS vs 10 Secret Bases, with GENIUS and Secret Bases selected.">
+            </picture></a>
+          </figure>
+        </article>
+
+        <article class="feature flip">
+          <div class="feature-text">
+            <p class="eyebrow">Shorts and comments</p>
+            <h3>Hide Shorts and comments, one switch each</h3>
+            <p>Hide Shorts removes them from Home, Subscriptions, search and the sidebar. Hide comments removes the whole comments section under videos.</p>
+            <ul class="ticks">
+              <li>Both stay off until you switch them on</li>
+              <li>In Subscriptions, CleanFeed hides the “More relevant” section YouTube's algorithm adds, so you see what your channels posted (on by default)</li>
+              <li>A Short opened from a direct link still plays</li>
+            </ul>
+            <p><a href="hide-youtube-shorts.html">How to hide YouTube Shorts on desktop</a></p>
+          </div>
+          <figure class="shot">
+            <a href="assets/cleanfeed-hide-shorts-and-comments.png" title="Open the full-size screenshot"><picture>
+              <source srcset="assets/cleanfeed-hide-shorts-and-comments.webp" type="image/webp">
+              <img src="assets/cleanfeed-hide-shorts-and-comments.png" width="1280" height="800" loading="lazy"
+                   alt="CleanFeed Settings with Hide Shorts and Hide YouTube comments switched on, a language menu, and Strict mode marked Pro.">
+            </picture></a>
+          </figure>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="control-title">
+      <div class="wrap">
+        <div class="section-head">
+          <p class="eyebrow">Stay in control</p>
+          <h2 id="control-title">Look past a filter without undoing it</h2>
+        </div>
+        <dl class="controls">
+          <div><dt>Watch just now, or Skip</dt><dd>Click a video that matches a blocked word or topic and CleanFeed asks before it plays.</dd></div>
+          <div><dt>Show just now</dt><dd>See a blocked channel's videos on one page without unblocking it.</dd></div>
+          <div><dt>Pause on this page</dt><dd>A CleanFeed switch in YouTube's top bar turns filtering off for the current page. It's back on when you move to another page.</dd></div>
+          <div><dt>Export and Import</dt><dd>Save your blocks and settings to a file, and load them on another computer.</dd></div>
+          <div><dt>Light and dark</dt><dd>The popup and Settings follow your system theme. Buttons on YouTube follow YouTube's theme.</dd></div>
+          <div><dt>Strict Mode <span class="plan-tag">Pro</span></dt><dd>A password is needed before anyone can loosen your filters.</dd></div>
+        </dl>
+        <div class="callout">
+          <p><strong>By design, blocks never apply to your Subscriptions feed.</strong> You chose those channels, so CleanFeed leaves that feed alone. Hide Shorts and the “More relevant” switch still work there.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section band-2" id="pricing" aria-labelledby="pricing-title">
+      <div class="wrap">
+        <div class="section-head">
+          <p class="eyebrow">Free and Pro</p>
+          <h2 id="pricing-title">Channel blocking is free. Pro unlocks the rest.</h2>
+        </div>
+        <div class="plans">
+          <div class="plan plan-free">
+            <h3>Free</h3>
+            <p class="plan-price">$0</p>
+            <p class="plan-sub">No card, no account.</p>
+            <ul class="ticks">
+              <li>Unlimited channel blocking</li>
+              <li>3 slots shared by keywords and topics</li>
+              <li>Hide Shorts, comments and “More relevant”</li>
+              <li>3-dot menu items, Block this channel, CF+ and Scan</li>
+              <li>Watch just now, Show just now and page pause</li>
+              <li>Export, Import and Stats</li>
+            </ul>
+          </div>
+          <div class="plan plan-pro on-forest">
+            <h3>Pro</h3>
+            <p class="plan-sub">Everything in Free, plus:</p>
+            <ul class="ticks">
+              <li>Unlimited keywords and topics</li>
+              <li>Strict Mode: a password is needed to loosen your filters</li>
+              <li>A log of the last 100 hidden videos, with the reason</li>
+              <li>Exceptions for channels you subscribe to</li>
+            </ul>
+            <ul class="prices" aria-label="Pro prices in US dollars">
+              <li><span class="label">Monthly</span><span class="amount">$2.99</span><span class="detail">per month</span></li>
+              <li class="highlight"><span class="label">Yearly</span><span class="amount">$19.99</span><span class="detail">per year: $1.67 a month, save 44%</span></li>
+              <li><span class="label">Lifetime</span><span class="amount">$29.99</span><span class="detail">one-time, launch price until December 31, 2026</span></li>
+            </ul>
+            <p class="fine">Prices in USD. Upgrade from CleanFeed's popup or Settings. Checkout and payments are handled by ExtensionPay with Stripe; the developer never sees your full card number.</p>
+          </div>
+        </div>
+
+        <div class="table-wrap" role="region" aria-labelledby="plan-table-caption" tabindex="0">
+          <table class="plan-table">
+            <caption id="plan-table-caption">Free and Pro, feature by feature</caption>
+            <thead>
+              <tr><th scope="col">Feature</th><th scope="col">Free</th><th scope="col">Pro</th></tr>
+            </thead>
+            <tbody>
+              <tr><th scope="row">Channel blocking</th><td>Unlimited</td><td>Unlimited</td></tr>
+              <tr><th scope="row">Keywords and topics, combined</th><td>3</td><td>Unlimited</td></tr>
+              <tr><th scope="row">Extra terms inside a blocked topic</th><td>Unlimited</td><td>Unlimited</td></tr>
+              <tr><th scope="row">Quick presets (3 topics each)</th><td>When they fit in your 3 slots</td><td>All 5</td></tr>
+              <tr><th scope="row">Hide Shorts, comments and “More relevant”</th><td>Yes</td><td>Yes</td></tr>
+              <tr><th scope="row">CF+, Scan and “Not interested in this topic”</th><td>Yes</td><td>Yes</td></tr>
+              <tr><th scope="row">Auto-tag and discussion-video exceptions</th><td>Yes</td><td>Yes</td></tr>
+              <tr><th scope="row">Watch just now, Show just now, page pause</th><td>Yes</td><td>Yes</td></tr>
+              <tr><th scope="row">Stats, Export and Import</th><td>Yes</td><td>Yes</td></tr>
+              <tr><th scope="row">Log of the last 100 hidden videos</th><td class="no">No</td><td>Yes</td></tr>
+              <tr><th scope="row">Exceptions for subscribed channels</th><td class="no">No</td><td>Yes</td></tr>
+              <tr><th scope="row">Strict Mode password lock</th><td class="no">No</td><td>Yes</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="privacy" aria-labelledby="privacy-title">
+      <div class="wrap privacy">
+        <div class="section-head">
+          <p class="eyebrow">Privacy</p>
+          <h2 id="privacy-title">Your lists stay in your browser</h2>
+          <p>CleanFeed is a filter, not a service. There's nothing to sign in to and nothing to report back.</p>
+          <p><a href="privacy-policy.html">Read the privacy policy</a></p>
+        </div>
+        <dl class="privacy-list">
+          <div><dt>No account</dt><dd>Install it and start blocking. There's nothing to sign up for.</dd></div>
+          <div><dt>No tracking</dt><dd>No analytics and no tracking scripts. CleanFeed doesn't send your blocklists, settings or viewing anywhere.</dd></div>
+          <div><dt>One outside service</dt><dd>CleanFeed's scripts run on youtube.com. The only other site it talks to is extensionpay.com, for Pro prices and payments.</dd></div>
+        </dl>
+      </div>
+    </section>
+
+    <section class="section band-2" id="faq" aria-labelledby="faq-title">
+      <div class="wrap faq">
+        <div class="section-head">
+          <p class="eyebrow">FAQ</p>
+          <h2 id="faq-title">Questions people ask first</h2>
+          <p>Something else? Email <a href="mailto:factuallogic98@gmail.com">factuallogic98@gmail.com</a>.</p>
+        </div>
+        <div class="faq-list">
+          <details>
+            <summary>Is CleanFeed really free?</summary>
+            <div class="faq-answer"><p>Yes. The free plan has unlimited channel blocking, 3 slots shared by keywords and topics, Hide Shorts, Hide comments and every tool except Strict Mode and the Pro extras listed below. Pro is optional: it adds unlimited keywords and topics, Strict Mode, a log of the last 100 hidden videos and exceptions for channels you subscribe to.</p></div>
+          </details>
+          <details>
+            <summary>Does it work on my phone, tablet or TV?</summary>
+            <div class="faq-answer"><p>No. CleanFeed is a Chrome extension, so it works on youtube.com in Chrome on a computer. It can't change the YouTube app on phones, tablets, TVs or game consoles.</p></div>
+          </details>
+          <details>
+            <summary>Why doesn't it hide anything in my Subscriptions feed?</summary>
+            <div class="faq-answer"><p>That's on purpose. You picked those channels, so channel, keyword and topic blocks never apply to the Subscriptions feed. Two things do work there: Hide Shorts, and hiding the “More relevant” section that YouTube's algorithm adds to the feed.</p></div>
+          </details>
+          <details>
+            <summary>Do I need an account?</summary>
+            <div class="faq-answer"><p>No. There's no CleanFeed account and no sign-up. If you buy Pro, payment runs through ExtensionPay's checkout with Stripe, which asks for an email address for the purchase.</p></div>
+          </details>
+          <details>
+            <summary>What does CleanFeed do with my data?</summary>
+            <div class="faq-answer"><p>Your blocklists and settings stay in your browser. CleanFeed has no analytics and no tracking, and it doesn't send your lists anywhere. The only outside service it talks to is ExtensionPay, for plan prices and payments. The <a href="privacy-policy.html">privacy policy</a> has the details.</p></div>
+          </details>
+          <details>
+            <summary>Does blocking a channel tell YouTube or the creator?</summary>
+            <div class="faq-answer"><p>No. CleanFeed hides videos on your screen. It sends nothing to YouTube and the channel isn't notified.</p><p>That also means it doesn't train YouTube's recommendations: YouTube may keep suggesting the channel, and CleanFeed keeps hiding it. A video you open from a direct link still plays.</p></div>
+          </details>
+          <details>
+            <summary>How do keywords and topics match video titles?</summary>
+            <div class="faq-answer"><p>Keywords match whole words in a video's title, in any language and alphabet: blocking “game” hides “Game night” but not “Endgame”. In search results CleanFeed also checks the description snippet.</p><p>A topic is a ready-made word list: turn on Crypto and titles with words like bitcoin or blockchain go too. Topic lists cover English and Italian words, and you can switch off any term or add your own.</p></div>
+          </details>
+          <details>
+            <summary>Can I move my blocklist to another computer?</summary>
+            <div class="faq-answer"><p>Yes, with Export and Import in CleanFeed's Settings. Export saves your blocks and settings to a JSON file, and Import loads that file on the other computer.</p></div>
+          </details>
+          <details>
+            <summary>Can I use it as a parental control?</summary>
+            <div class="faq-answer"><p>Only loosely. Strict Mode (Pro) asks for a password before anyone can unblock channels, remove keywords or turn off Hide Shorts. It can't stop someone with access to Chrome's extension settings from turning CleanFeed off or removing it, so it isn't a full parental-control tool.</p></div>
+          </details>
+          <details>
+            <summary>What happens when YouTube changes its layout?</summary>
+            <div class="faq-answer"><p>Something may slip through for a while. CleanFeed works on YouTube's pages, and YouTube changes them often, which can break any extension like it until an update ships. If you spot a problem, use Report a Bug in CleanFeed's Settings or email <a href="mailto:factuallogic98@gmail.com">factuallogic98@gmail.com</a>.</p></div>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <section class="section cta-band on-forest" aria-labelledby="cta-title">
+      <div class="wrap">
+        <div>
+          <h2 id="cta-title">Try it on your own feed</h2>
+          <p>Free, no account, and it starts working in YouTube tabs you already have open. Block one channel and see what changes.</p>
+        </div>
+        <a class="btn btn-primary" href="https://chromewebstore.google.com/detail/cleanfeed-for-youtube-blo/iikgdocegpniapcigmmgcnacfojmmnnd?utm_source=website&amp;utm_campaign=site">Add to Chrome<span class="visually-hidden">,</span> <span class="btn-note">it's free</span></a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <div class="footer-grid">
+        <div>
+          <a class="brand" href="./">
+            <svg viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="#2b7656"/><rect x="12" y="15.5" width="40" height="7.5" rx="1.5" fill="#f3faf6"/><rect x="12" y="29.5" width="29.5" height="7" rx="1.5" fill="#f3faf6"/><rect x="12" y="43.5" width="11" height="7.5" rx="1.5" fill="#f3faf6"/></svg>
+            <span>CleanFeed</span>
+          </a>
+          <p>A Chrome extension that blocks YouTube channels, keywords and topics, and hides Shorts. Made by an independent developer. Not affiliated with YouTube or Google.</p>
+        </div>
+        <div>
+          <h2>Guides</h2>
+          <ul>
+            <li><a href="how-to-block-youtube-channels.html">How to block YouTube channels</a></li>
+            <li><a href="hide-youtube-shorts.html">How to hide YouTube Shorts</a></li>
+            <li><a href="blocktube-alternative.html">A BlockTube alternative</a></li>
+          </ul>
+        </div>
+        <div>
+          <h2>CleanFeed</h2>
+          <ul>
+            <li><a href="https://chromewebstore.google.com/detail/cleanfeed-for-youtube-blo/iikgdocegpniapcigmmgcnacfojmmnnd?utm_source=website&amp;utm_campaign=site">Chrome Web Store</a></li>
+            <li><a href="./#pricing">Pricing</a></li>
+            <li><a href="privacy-policy.html">Privacy policy</a></li>
+            <li><a href="mailto:factuallogic98@gmail.com">factuallogic98@gmail.com</a></li>
+          </ul>
+        </div>
+      </div>
+      <p class="footer-note">YouTube is a trademark of Google LLC. This site sets no cookies and loads no analytics.</p>
+    </div>
+  </footer>
+</body>
+</html>
