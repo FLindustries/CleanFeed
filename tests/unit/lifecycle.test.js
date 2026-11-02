@@ -9,7 +9,7 @@
 //   - cfClearCleanFeedPage (content-dom.js): removes every piece of CleanFeed UI
 //     and the classes / attributes CleanFeed put on YouTube's own elements, so a
 //     new content script never inherits an orphaned one's leftovers.
-//   - manifest: the scripting permission, version 1.4.0; both locales carry
+//   - manifest: the scripting permission, version 1.4.1; both locales carry
 //     the two new toasts.
 
 const assert = require('node:assert');
@@ -42,9 +42,9 @@ function expectedInjection(tabId) {
   ];
 }
 
-test('manifest: scripting permission, version 1.4.0, YouTube scripts load features.js first', () => {
+test('manifest: scripting permission, version 1.4.1, YouTube scripts load features.js first', () => {
   assert.ok(MANIFEST.permissions.includes('scripting'), 'permissions include scripting');
-  assert.strictEqual(MANIFEST.version, '1.4.0');
+  assert.strictEqual(MANIFEST.version, '1.4.1');
   assert.deepStrictEqual(youTubeEntry().js, ['features.js', 'content-dom.js', 'content.js']);
   assert.deepStrictEqual(youTubeEntry().css, ['styles/content.css']);
 });

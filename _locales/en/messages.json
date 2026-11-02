@@ -11,8 +11,8 @@
   "strictRequiresPassword": { "message": "Strict mode is enabled. Enter password to continue:" },
   "strictLockedTitle": { "message": "Locked by Strict Mode" },
   "strictLockedToast": { "message": "Locked by Strict Mode. To change this, turn off Strict Mode in CleanFeed Settings." },
-  "extensionName": { "message": "CleanFeed for YouTube: Block Channels & Keywords, Hide Shorts" },
-  "extensionDescription": { "message": "Hide videos from channels you block, filter titles by keyword or 35 ready-made topics, and remove Shorts. No account, no tracking." },
+  "extensionName": { "message": "CleanFeed for YouTube: Hide Shorts, Block Channels & Keywords" },
+  "extensionDescription": { "message": "Turn off YouTube Shorts, block channels for good, and filter videos by keyword or 35 ready-made topics. No account, no tracking." },
   "controls": { "message": "Controls" },
   "blocked": { "message": "Blocked" },
   "hidden": { "message": "Hidden" },
@@ -188,5 +188,10 @@
   "planYoureProTitle": { "message": "You're Pro — thank you" },
   "planLineYearly": { "message": "$PRICE$/mo billed yearly", "placeholders": { "price": { "content": "$1" } } },
   "planLineMonthly": { "message": "$PRICE$ monthly", "placeholders": { "price": { "content": "$1" } } },
-  "planLineOr": { "message": "or $TEXT$", "placeholders": { "text": { "content": "$1" } } }
+  "planLineOr": { "message": "or $TEXT$", "placeholders": { "text": { "content": "$1" } } },
+  "reviewAskTitle": { "message": "Is CleanFeed making YouTube better for you?" },
+  "reviewAskSubtitle": { "message": "One click. A rating helps other people find CleanFeed." },
+  "reviewYes": { "message": "Yes, rate it" },
+  "reviewNo": { "message": "Not really" },
+  "reviewLater": { "message": "Later" }
 }

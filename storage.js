@@ -481,10 +481,25 @@ const Storage = {
     return stats || this.DEFAULTS.stats;
   },
 
-  async incrementStat(statName, amount) {
-    const stats = await this.getStats();
+  // `dayKey` (local YYYY-MM-DD): a day with hidden videos counts once toward
+  // the review prompt (stats.activeDays).
+  async incrementStat(statName, amount, dayKey) {
+    const stats = Object.assign({}, await this.getStats());
     stats[statName] = (stats[statName] || 0) + (amount || 1);
+    if (statName === 'videosHidden' && dayKey && stats.lastActiveDay !== dayKey) {
+      stats.activeDays = (stats.activeDays || 0) + 1;
+      stats.lastActiveDay = dayKey;
+    }
     await chrome.storage.local.set({ stats });
+  },
+
+  // Merges `patch` into stats. The review prompt keeps its state here
+  // (reviewSince, reviewStatus, reviewLaterUntil, reviewLaterCount,
+  // reviewAnswer) so that it never triggers a refilter on YouTube.
+  async updateStats(patch) {
+    const stats = Object.assign({}, await this.getStats(), patch);
+    await chrome.storage.local.set({ stats });
+    return stats;
   },
 
   // --- Onboarding ---

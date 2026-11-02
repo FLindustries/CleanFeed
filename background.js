@@ -13,6 +13,52 @@ try {
   console.warn('CleanFeed: ExtensionPay init failed:', e);
 }
 
+// --- Review prompt and uninstall page ---
+// The popup asks once, after real use, whether CleanFeed makes YouTube better:
+// Yes opens the Web Store reviews, Not really opens a feedback email.
+const REVIEW_URL = 'https://chromewebstore.google.com/detail/iikgdocegpniapcigmmgcnacfojmmnnd/reviews';
+const FEEDBACK_URL = 'mailto:cleanfeed.support@gmail.com?subject=' + encodeURIComponent('CleanFeed feedback');
+const UNINSTALL_URL = 'https://flindustries.github.io/CleanFeed/uninstall.html';
+const DAY_MS = 24 * 60 * 60 * 1000;
+const REVIEW_RULES = { minDays: 7, minActiveDays: 3, minHidden: 20, laterDays: 14, maxLater: 1 };
+
+// Pure. Local calendar day of `ms` as YYYY-MM-DD.
+function cfLocalDayKey(ms) {
+  const d = new Date(ms);
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+
+// Pure. True when the popup should ask: tracked for 7+ days, used on 3+
+// different days, 20+ videos hidden, not answered, not snoozed.
+function cfReviewPromptDue(stats, now) {
+  const s = stats || {};
+  if (s.reviewStatus === 'done') return false;
+  if (!s.reviewSince || now - s.reviewSince < REVIEW_RULES.minDays * DAY_MS) return false;
+  if ((s.activeDays || 0) < REVIEW_RULES.minActiveDays) return false;
+  if ((s.videosHidden || 0) < REVIEW_RULES.minHidden) return false;
+  if (s.reviewLaterUntil && now < s.reviewLaterUntil) return false;
+  return true;
+}
+
+// Pure. The stats patch for an answer: Yes / Not really end the prompt; the
+// first Later snoozes it 14 days, the second ends it.
+function cfReviewAnswerPatch(stats, answer, now) {
+  if (answer === 'later') {
+    const count = ((stats && stats.reviewLaterCount) || 0) + 1;
+    return count > REVIEW_RULES.maxLater
+      ? { reviewStatus: 'done', reviewLaterCount: count }
+      : { reviewLaterCount: count, reviewLaterUntil: now + REVIEW_RULES.laterDays * DAY_MS };
+  }
+  return { reviewStatus: 'done', reviewAnswer: answer === 'yes' ? 'yes' : 'no' };
+}
+
+// Chrome opens this page when someone removes CleanFeed (no data is sent).
+try {
+  if (chrome.runtime.setUninstallURL) chrome.runtime.setUninstallURL(UNINSTALL_URL);
+} catch (e) {
+  console.warn('CleanFeed: setUninstallURL failed:', e);
+}
+
 // --- Pro status (cached) ---
 // extpay.getUser() is a request to extensionpay.com (once the user has ever
 // opened the payment page), so the answer is cached in memory and in
@@ -330,6 +376,13 @@ async function injectIntoOpenYouTubeTabs() {
 
 chrome.runtime.onInstalled.addListener(async (details) => {
   await Storage.init();
+  // Review prompt clock: starts at install, or at the update that added it
+  try {
+    const stats = await Storage.getStats();
+    if (!stats.reviewSince) await Storage.updateStats({ reviewSince: Date.now() });
+  } catch (e) {
+    console.warn('CleanFeed: failed to start the review prompt clock:', e);
+  }
   // Smart Decay hidden (features.js): no alarm; remove one an older version made.
   if (CF_FEATURES.smartDecay) chrome.alarms.create('smartDecay', { periodInMinutes: 24 * 60 });
   else chrome.alarms.clear('smartDecay');
@@ -858,7 +911,20 @@ async function handleMessage(request) {
     }
 
     case 'incrementStat': {
-      await Storage.incrementStat(request.stat, request.amount || 1);
+      await Storage.incrementStat(request.stat, request.amount || 1, cfLocalDayKey(Date.now()));
+      return { success: true };
+    }
+
+    // --- Review prompt (popup) ---
+    case 'getReviewPrompt': {
+      return { show: cfReviewPromptDue(await Storage.getStats(), Date.now()) };
+    }
+
+    case 'answerReviewPrompt': {
+      const answer = ['yes', 'no', 'later'].includes(request.answer) ? request.answer : 'later';
+      const stats = await Storage.getStats();
+      await Storage.updateStats(cfReviewAnswerPatch(stats, answer, Date.now()));
+      if (answer !== 'later') await chrome.tabs.create({ url: answer === 'yes' ? REVIEW_URL : FEEDBACK_URL });
       return { success: true };
     }
 

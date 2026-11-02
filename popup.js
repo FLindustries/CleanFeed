@@ -40,12 +40,45 @@ document.addEventListener('DOMContentLoaded', async () => {
   applyI18n();
   renderAll();
   setupTabs();
+  maybeShowReviewPrompt();
 
   // Open full options page
   document.getElementById('openOptionsBtn').addEventListener('click', () => {
     chrome.runtime.openOptionsPage();
   });
 });
+
+// Asks once, after real use, whether CleanFeed helps (background.js decides
+// when): Yes opens the Web Store reviews, Not really a feedback email.
+async function maybeShowReviewPrompt() {
+  const box = document.getElementById('reviewPrompt');
+  if (!box) return;
+  let res = null;
+  try { res = await chrome.runtime.sendMessage({ action: 'getReviewPrompt' }); } catch (e) { return; }
+  if (!res || !res.show) return;
+  const title = document.createElement('div');
+  title.className = 'review-prompt-title';
+  title.textContent = cfMsg('reviewAskTitle');
+  const subtitle = document.createElement('div');
+  subtitle.className = 'review-prompt-subtitle';
+  subtitle.textContent = cfMsg('reviewAskSubtitle');
+  const actions = document.createElement('div');
+  actions.className = 'review-prompt-actions';
+  [['yes', 'reviewYes', 'review-btn review-btn-primary'],
+   ['no', 'reviewNo', 'review-btn'],
+   ['later', 'reviewLater', 'review-btn review-btn-quiet']].forEach(([answer, key, cls]) => {
+    const btn = document.createElement('button');
+    btn.className = cls;
+    btn.textContent = cfMsg(key);
+    btn.addEventListener('click', async () => {
+      box.hidden = true;
+      try { await chrome.runtime.sendMessage({ action: 'answerReviewPrompt', answer }); } catch (e) { /* popup closing */ }
+    });
+    actions.appendChild(btn);
+  });
+  box.replaceChildren(title, subtitle, actions);
+  box.hidden = false;
+}
 
 async function loadState() {
   state = await chrome.runtime.sendMessage({ action: 'getFullState' });

@@ -562,3 +562,66 @@ body {
 .clear-all-btn:hover {
   background: var(--border);
 }
+
+/* ── Review prompt (asked once, after real use) ── */
+.review-prompt {
+  margin: 10px 12px 0;
+  padding: 12px;
+  background: var(--accent-light);
+  border: 1px solid var(--accent-mid);
+  border-radius: var(--radius-md);
+  text-align: center;
+}
+
+.review-prompt[hidden] {
+  display: none;
+}
+
+.review-prompt-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.review-prompt-subtitle {
+  font-size: 11px;
+  color: var(--text-2);
+  margin-bottom: 10px;
+  line-height: 1.5;
+}
+
+.review-prompt-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.review-btn {
+  padding: 6px 12px;
+  border: 1px solid var(--accent-mid);
+  border-radius: 99px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.review-btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: oklch(99% 0.003 160);
+}
+
+.review-btn-primary:hover {
+  background: var(--accent-hover);
+}
+
+.review-btn-quiet {
+  border-color: transparent;
+  color: var(--text-2);
+  font-weight: 500;
+}

@@ -3,7 +3,7 @@
 ## Release notes for the owner (do not paste)
 
 - **Title:** final. EN 61 characters, IT 69 (limit 75). Identical to `extensionName` in `_locales/en/messages.json` and `_locales/it/messages.json`; the store takes the name from the uploaded package.
-- **Short description:** final. EN 130 characters, IT 130 (limit 132). Identical to `extensionDescription` in the same two files.
+- **Short description:** final. EN 128 characters, IT 124 (limit 132). Updated 2026-11-02: Shorts first in the title, "turn off" / "disattiva" in the short description, to match the highest-volume searches. Identical to `extensionDescription` in the same two files.
 - **Full description:** final, fact-checked against the code on `chore/v1.4-store-copy`. EN 2,498 characters, IT 2,780 (store limit 16,000). Plain text: paste each block as-is.
 - **Prices:** live in ExtensionPay since 2026-10-12, in USD: Monthly $2.99, Yearly $19.99, Lifetime $29.99 one-time. The app reads its prices from ExtensionPay, so the descriptions must always match the dashboard.
 - **REMINDER, Lifetime price:** on or after **2027-01-01 12:00 UTC** (13:00 in Italy), raise Lifetime to **$39.99** in the ExtensionPay dashboard, keeping the plan nickname `lifetime`. Then, in both full descriptions, remove the launch-price sentence ("(launch price until December 31, 2026)" and "(prezzo di lancio fino al 31 dicembre 2026)") and change 29.99 to 39.99. The app's own launch-price note stops by itself after December 31, 2026.
@@ -14,13 +14,13 @@
 ## EN Title
 
 ```
-CleanFeed for YouTube: Block Channels & Keywords, Hide Shorts
+CleanFeed for YouTube: Hide Shorts, Block Channels & Keywords
 ```
 
 ## EN Short description
 
 ```
-Hide videos from channels you block, filter titles by keyword or 35 ready-made topics, and remove Shorts. No account, no tracking.
+Turn off YouTube Shorts, block channels for good, and filter videos by keyword or 35 ready-made topics. No account, no tracking.
 ```
 
 ## EN Full description
@@ -83,13 +83,13 @@ Not affiliated with YouTube or Google.
 ## IT Title
 
 ```
-CleanFeed per YouTube: blocca canali e parole chiave, nascondi Shorts
+CleanFeed per YouTube: nascondi Shorts, blocca canali e parole chiave
 ```
 
 ## IT Short description
 
 ```
-Nascondi i video dei canali bloccati, filtra i titoli per parola o 35 argomenti, togli gli Shorts. Niente account né tracciamento.
+Disattiva gli Shorts, blocca i canali per sempre e filtra i video per parola o 35 argomenti. Niente account né tracciamento.
 ```
 
 ## IT Full description

@@ -11,8 +11,8 @@
   "strictRequiresPassword": { "message": "Modalità rigorosa attiva. Inserisci la password per continuare:" },
   "strictLockedTitle": { "message": "Bloccato dalla modalità rigorosa" },
   "strictLockedToast": { "message": "Bloccato dalla modalità rigorosa. Per cambiarlo, disattiva la modalità rigorosa nelle Impostazioni di CleanFeed." },
-  "extensionName": { "message": "CleanFeed per YouTube: blocca canali e parole chiave, nascondi Shorts" },
-  "extensionDescription": { "message": "Nascondi i video dei canali bloccati, filtra i titoli per parola o 35 argomenti, togli gli Shorts. Niente account né tracciamento." },
+  "extensionName": { "message": "CleanFeed per YouTube: nascondi Shorts, blocca canali e parole chiave" },
+  "extensionDescription": { "message": "Disattiva gli Shorts, blocca i canali per sempre e filtra i video per parola o 35 argomenti. Niente account né tracciamento." },
   "controls": { "message": "Controlli" },
   "blocked": { "message": "Bloccati" },
   "hidden": { "message": "Nascosti" },
@@ -188,5 +188,10 @@
   "planYoureProTitle": { "message": "Sei Pro — grazie" },
   "planLineYearly": { "message": "$PRICE$/mese con l'annuale", "placeholders": { "price": { "content": "$1" } } },
   "planLineMonthly": { "message": "$PRICE$ al mese", "placeholders": { "price": { "content": "$1" } } },
-  "planLineOr": { "message": "o $TEXT$", "placeholders": { "text": { "content": "$1" } } }
+  "planLineOr": { "message": "o $TEXT$", "placeholders": { "text": { "content": "$1" } } },
+  "reviewAskTitle": { "message": "CleanFeed ti sta migliorando YouTube?" },
+  "reviewAskSubtitle": { "message": "Basta un clic. Una recensione aiuta altre persone a trovare CleanFeed." },
+  "reviewYes": { "message": "Sì, lascia una recensione" },
+  "reviewNo": { "message": "Non proprio" },
+  "reviewLater": { "message": "Più tardi" }
 }
